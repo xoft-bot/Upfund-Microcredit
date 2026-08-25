@@ -10,6 +10,7 @@ import { postLedgerTransactionOnClient } from './services/ledger.js';
 import { SYSTEM_VERSION } from '../../shared/version.js';
 import { registerPaymentRoutes } from './routes/payments.js';
 import { registerReconciliationRoutes } from './routes/reconciliations.js';
+import { registerWebhookRoutes } from './routes/webhookRoutes.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
@@ -30,6 +31,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
 
   registerPaymentRoutes(app, options.tokenVerifier);
   registerReconciliationRoutes(app, options.tokenVerifier);
+  registerWebhookRoutes(app);
   const auth = authMiddleware(options.tokenVerifier);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],
