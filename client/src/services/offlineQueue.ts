@@ -1,5 +1,6 @@
 import type { CollectionBatch, CollectionStatus, FieldCollectionRecord, QueueSnapshot, SyncState } from '../types/field-ops.js';
 import { telemetry } from './telemetry.js';
+import { postPayment } from './api.js';
 
 const databaseName = 'letsgrow-field-ops';
 const databaseVersion = 1;
@@ -132,7 +133,7 @@ export class OfflineQueue {
 
 export function createPaymentSync(apiBaseUrl = ''): PaymentSync {
   return async (record) => {
-    const response = await fetch(`${apiBaseUrl}/api/v1/payments`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-correlation-id': record.correlationId }, body: JSON.stringify({ loanId: record.loanId, branchId: record.branchId, amount: record.amount, idempotencyKey: record.idempotencyKey, receiptReference: record.receiptReference }) });
-    return await response.json() as SyncResponse;
+    try { const result = await postPayment({ loanId: record.loanId, branchId: record.branchId, amount: record.amount, idempotencyKey: record.idempotencyKey, receiptReference: record.receiptReference }, undefined, apiBaseUrl, record.correlationId); return { ok: true, data: { receiptReference: result.receiptReference } }; }
+    catch (error) { const failure = error instanceof Error ? error.message : 'PAYMENT_SYNC_FAILED'; return { ok: false, error: { code: failure, message: failure } }; }
   };
 }

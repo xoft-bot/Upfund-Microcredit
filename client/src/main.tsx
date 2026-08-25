@@ -7,6 +7,7 @@ import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
 import { ManagerVarianceDashboard, type VarianceBatch } from './components/field/ManagerVarianceDashboard.js';
 import { ReceiptPreview } from './components/field/ReceiptPreview.js';
 import { OfflineQueue, createPaymentSync } from './services/offlineQueue.js';
+import { getHealth } from './services/api.js';
 import type { FieldCollectionRecord } from './types/field-ops.js';
 
 const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
@@ -28,9 +29,8 @@ function App() {
     let active = true;
     const checkBackend = async () => {
       try {
-        const response = await fetch('/health', { headers: { Accept: 'application/json' } });
-        const body = await response.json() as { version?: string };
-        if (active) setBackendLive(response.ok && body.version === appVersion);
+        const health = await getHealth();
+        if (active) setBackendLive(health.database === 'up');
       } catch {
         if (active) setBackendLive(false);
       }
