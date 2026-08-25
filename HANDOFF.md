@@ -1,7 +1,7 @@
 # Letsgrow-Microcredit Backend Handoff
 
 **System version:** `1.0.01`  
-**Backend status:** Frozen for independent audit and review  
+**Backend status:** Stage 4 Task 2 implemented; ready for independent audit
 **Repository:** [xoft-bot/Letsgrow-Microcredit](https://github.com/xoft-bot/Letsgrow-Microcredit)
 
 ## Version and commits
@@ -30,6 +30,7 @@ Migrations must be applied in order and recorded in `schema_migrations`:
 | 2 | `002_stage2_credit_reconciliation.sql` | KYC, risk, reconciliation, allocation policy, and pool-allocation models |
 | 3 | `003_stage2_payment_posting.sql` | Schedule payment allocation fields and payment posting constraints |
 | 4 | `004_collection_pool.sql` | Explicit collection capital-pool type |
+| 5 | `005_field_collection_sources.sql` | Field collection source records for scheduled reconciliation |
 
 ## Local certification
 
@@ -58,6 +59,12 @@ npm run build
 ## Stage 3 PWA deliverables
 
 The Stage 3 client includes the offline field-collection queue and typed field-operation records, collector route and collection form, pending-aware receipt preview and print renderer, manager variance review and approval workflow, masked telemetry with correlation IDs and sync latency, and a graceful offline-recovery error boundary. The PWA never marks a payment as posted before server confirmation, performs no ledger or capital-pool calculations locally, and requires a decision reason for variance actions.
+
+## Stage 4 Task 2 reconciliation automation
+
+The scheduled runner in `server/src/jobs/reconciliationCron.ts` obtains a PostgreSQL advisory lock, aggregates eligible gateway and field-collection payments by branch, calculates expected obligations from open schedules, and routes only fully matched batches through the existing balance-checked posting service. Non-zero variances are inserted into the `variance` review queue by `varianceAlerting.ts`, linked to their payment records, audited, and emitted as structured telemetry carrying version `1.0.01`, a correlation ID, branch, batch reference, variance, and threshold. No variance batch moves capital pools or posts automatically.
+
+The Stage 4 Task 2 focused suite contains 3 passing tests. The full local quality run reported **25 passing tests and 5 database tests skipped without `DATABASE_URL`**, zero TypeScript errors, zero ESLint warnings, and a successful production build. The database-backed certification tests should be rerun with a disposable PostgreSQL instance before production deployment.
 
 The Stage 3 client verification reported **22/22 Vitest tests passing**, **0 TypeScript errors**, **0 ESLint warnings**, and a certified production build. No production backend code under `server/src/` was modified during Stage 3.
 

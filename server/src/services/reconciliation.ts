@@ -17,6 +17,6 @@ export function calculateReconciliation(input: ReconciliationInput): Reconciliat
   assertAmount(input.expectedAmount);
   assertAmount(input.recordedAmount);
   assertAmount(input.submittedAmount);
-  const variance = input.submittedAmount - input.recordedAmount;
+  const variance = input.submittedAmount !== input.recordedAmount ? input.submittedAmount - input.recordedAmount : input.submittedAmount - input.expectedAmount;
   return { ...input, variance, status: variance === 0 && input.recordedAmount === input.expectedAmount ? 'matched' : 'variance' };
 }
