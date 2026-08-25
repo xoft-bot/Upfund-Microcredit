@@ -1,7 +1,7 @@
 # Letsgrow-Microcredit Backend Handoff
 
 **System version:** `1.0.01`  
-**Backend status:** Stage 4 Task 3 implemented; ready for final independent sign-off
+**Backend status:** Stage 4 cloud-binding preparation implemented; ready for deployment secrets
 **Repository:** [xoft-bot/Letsgrow-Microcredit](https://github.com/xoft-bot/Letsgrow-Microcredit)
 
 ## Version and commits
@@ -75,3 +75,11 @@ Audit streaming is read-only and ordered by `(created_at, id)` with bounded pagi
 The Stage 3 client verification reported **22/22 Vitest tests passing**, **0 TypeScript errors**, **0 ESLint warnings**, and a certified production build. No production backend code under `server/src/` was modified during Stage 3.
 
 Do not use production credentials, production borrower data, live payment providers, or real identity documents in local or test environments. Any backend change must preserve single-transaction financial actions, append-only history, strict double-entry balancing, idempotency, server-side authorization, and branch scope. The production guarantees are: PostgreSQL remains the authoritative financial source; every ledger transaction is balance-checked; payment and reconciliation commands remain atomic; webhook replay uses the original idempotency key; variance batches cannot auto-post or move capital pools; and telemetry exposes masked read models only.
+
+## Live cloud binding and CI
+
+`.env.example` is the non-secret configuration contract. Set `DATABASE_URL` to the TLS connection string supplied by Neon, Supabase, Render, or Cloud SQL, and keep it only in the hosting provider and GitHub Actions secret store. The deployment database must run migrations `001_stage1_core.sql` through `005_field_collection_sources.sql` in order, followed by `npm run db:check`.
+
+Firebase has explicit modes. Local and CI use `FIREBASE_MODE=mock` and `VITE_FIREBASE_MODE=mock`; mock server tokens are permitted only outside production. Production must set `FIREBASE_MODE=live` and provide `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`. The client uses only public `VITE_FIREBASE_*` identifiers. The Admin SDK private key, database URL, Flutterwave secret, and service-user ID must never be exposed to the client or committed.
+
+`.github/workflows/deploy.yml` runs on pushes and pull requests targeting `main`. It starts PostgreSQL 16, applies all migrations, verifies the complete schema, runs type-checking, linting, all database-backed tests, and the production build. The local verification after this change reports **29 passing tests and 5 database-backed tests skipped without `DATABASE_URL`**; CI is configured to provide `DATABASE_URL`, so those five tests execute there.
