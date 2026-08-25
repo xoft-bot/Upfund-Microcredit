@@ -21,6 +21,14 @@ Stage 2 adds PostgreSQL models for businesses, KYC records, risk assessments, re
 
 The manual logbook reconciliation calculation compares expected, recorded, and submitted amounts and emits a `matched` or `variance` result. It does not silently approve mismatches. The allocation engine accepts only realized charges, applies versioned basis-point policy allocations to credit-loss reserve, operating reserve, collection cost, and growth capital, and exposes deployable growth capital separately from gross charges and retained profit.
 
+## Atomic payment and reconciliation slice
+
+The API now exposes `POST /api/v1/payments` and `POST /api/v1/reconciliations/post-batch`. Manual payment posting locks the target loan and open schedule rows, allocates principal before charge, creates a unique receipt, updates operational loan and schedule balances, posts a balanced append-only ledger transaction, and writes the command audit event in the same PostgreSQL transaction. Any failure rolls back the payment, receipt, schedule update, loan update, ledger transaction, and audit event together.
+
+Batch reconciliation compares expected, recorded, and submitted logbook totals. A variance raises a fail-closed manager-override error and leaves no reconciliation row behind. A matched batch or explicitly manager-approved variance can proceed to realized-surplus allocation. The allocation engine never treats gross charges as deployable capital.
+
+The database-backed payment and reconciliation tests verify payment principal updates, receipt generation, balanced ledger totals, and variance rollback.
+
 ## Verification
 
 The complete suite passes:
@@ -34,8 +42,8 @@ npm test -- --reporter=verbose
 npm run build
 ```
 
-Current result: **15 tests passed across 4 test files**, 22 database tables verified, and the production PWA build completed successfully.
+Current result: **17 tests passed across 5 test files**, 22 database tables verified, and the production PWA build completed successfully.
 
 ## Scope boundary
 
-This is still synthetic Stage 2 logic. Live mobile-money APIs, real KYC providers, production borrower data, field-officer screens, full payment posting routes, and production deployment remain excluded until their own threat model, integration tests, and operational evidence are approved.
+This remains synthetic Stage 2 logic. Live mobile-money APIs, real KYC providers, production borrower data, field-officer screens, and production deployment remain excluded until their own threat model, integration tests, and operational evidence are approved.

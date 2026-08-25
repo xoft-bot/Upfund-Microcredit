@@ -8,6 +8,8 @@ import { authMiddleware, type TokenVerifier } from './middleware/auth.js';
 import { requireBranchScope, requireRoles } from './middleware/authorization.js';
 import { postLedgerTransactionOnClient } from './services/ledger.js';
 import { SYSTEM_VERSION } from '../../shared/version.js';
+import { registerPaymentRoutes } from './routes/payments.js';
+import { registerReconciliationRoutes } from './routes/reconciliations.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
@@ -26,6 +28,8 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
     return { ok: true, data: { service: 'letsgrow-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
 
+  registerPaymentRoutes(app, options.tokenVerifier);
+  registerReconciliationRoutes(app, options.tokenVerifier);
   const auth = authMiddleware(options.tokenVerifier);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],
