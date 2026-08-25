@@ -6,9 +6,9 @@
 
 ## Version and commits
 
-The previous approved backend baseline is commit `7d2989f`. The handoff package was introduced in `5be529f`, and the current repository HEAD is `d773565`. Documentation-only changes in this handoff do not alter backend behavior.
+The previous approved backend baseline is commit `7d2989f`. The handoff package was introduced in `5be529f`, and the current repository HEAD before this sign-off update is `0c08da6`. The final Stage 3 sign-off commit is recorded after this documentation update. Documentation-only changes in this handoff do not alter backend behavior.
 
-Version `1.0.01` is defined in the package manifest and shared version contract. API telemetry headers, success and error envelopes, and the PWA footer must continue to expose `1.0.01`.
+Version `1.0.01` is defined in the package manifest and shared version contract. API telemetry headers, success and error envelopes, PWA receipts, telemetry payloads, and the PWA footer expose or preserve `1.0.01`. Independent Stage 3 verification reported 22/22 Vitest tests passing, zero type errors, zero lint warnings, and a certified production build.
 
 ## Core endpoint contracts
 
@@ -54,5 +54,11 @@ npm run lint
 npm test -- --reporter=verbose
 npm run build
 ```
+
+## Stage 3 PWA deliverables
+
+The Stage 3 client includes the offline field-collection queue and typed field-operation records, collector route and collection form, pending-aware receipt preview and print renderer, manager variance review and approval workflow, masked telemetry with correlation IDs and sync latency, and a graceful offline-recovery error boundary. The PWA never marks a payment as posted before server confirmation, performs no ledger or capital-pool calculations locally, and requires a decision reason for variance actions.
+
+The Stage 3 client verification reported **22/22 Vitest tests passing**, **0 TypeScript errors**, **0 ESLint warnings**, and a certified production build. No production backend code under `server/src/` was modified during Stage 3.
 
 Do not use production credentials, production borrower data, live payment providers, or real identity documents in local or test environments. Any backend change must preserve single-transaction financial actions, append-only history, strict double-entry balancing, idempotency, server-side authorization, and branch scope.
