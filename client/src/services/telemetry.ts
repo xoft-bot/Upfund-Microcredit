@@ -11,7 +11,7 @@ export interface TelemetryEvent {
 }
 
 export type TelemetrySink = (event: TelemetryEvent) => void;
-const sensitiveKeys = /token|password|secret|national.?id|authorization|cookie/i;
+const sensitiveKeys = /token|password|secret|national.?id|borrower.?id|client.?id|loan.?id|phone|mobile|name|email|authorization|cookie/i;
 const makeId = (): string => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function mask(value: unknown, key = ''): unknown {

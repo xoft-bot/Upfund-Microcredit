@@ -5,7 +5,7 @@ export interface SystemHealth { version: typeof SYSTEM_VERSION; database: 'up' |
 export interface PoolStats { total: number; idle: number; waiting: number; max: number; }
 export interface QueueDepth { pendingPayments: number; pendingFieldCollections: number; varianceBatches: number; }
 export interface SafeAuditEvent { id: string; action: string; entityType: string; entityId: string | null; correlationId: string; metadata: Record<string, unknown>; createdAt: string; }
-const sensitive = /token|secret|password|private.?key|national.?id|borrower.?id|client.?id|loan.?id|entity.?id|firebase.?uid/i;
+const sensitive = /token|secret|password|private.?key|national.?id|borrower.?id|client.?id|loan.?id|entity.?id|phone|mobile|name|email|firebase.?uid/i;
 
 export function maskTelemetry(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(maskTelemetry);
