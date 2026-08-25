@@ -1,7 +1,7 @@
 # Letsgrow-Microcredit Backend Handoff
 
 **System version:** `1.0.01`  
-**Backend status:** Stage 4 Task 2 implemented; ready for independent audit
+**Backend status:** Stage 4 Task 3 implemented; ready for final independent sign-off
 **Repository:** [xoft-bot/Letsgrow-Microcredit](https://github.com/xoft-bot/Letsgrow-Microcredit)
 
 ## Version and commits
@@ -64,8 +64,14 @@ The Stage 3 client includes the offline field-collection queue and typed field-o
 
 The scheduled runner in `server/src/jobs/reconciliationCron.ts` obtains a PostgreSQL advisory lock, aggregates eligible gateway and field-collection payments by branch, calculates expected obligations from open schedules, and routes only fully matched batches through the existing balance-checked posting service. Non-zero variances are inserted into the `variance` review queue by `varianceAlerting.ts`, linked to their payment records, audited, and emitted as structured telemetry carrying version `1.0.01`, a correlation ID, branch, batch reference, variance, and threshold. No variance batch moves capital pools or posts automatically.
 
-The Stage 4 Task 2 focused suite contains 3 passing tests. The full local quality run reported **25 passing tests and 5 database tests skipped without `DATABASE_URL`**, zero TypeScript errors, zero ESLint warnings, and a successful production build. The database-backed certification tests should be rerun with a disposable PostgreSQL instance before production deployment.
+The Stage 4 Task 2 focused suite contains 3 passing tests. The Stage 4 Task 3 integration suite adds 4 passing tests covering webhook idempotency, cron posting and quarantine, protected telemetry routes, correlation propagation, and sensitive-field masking. The full local quality run should be rerun after this update; database-backed certification tests must be rerun with a disposable PostgreSQL instance before production deployment.
+
+## Stage 4 Task 3 production telemetry
+
+The protected telemetry routes are `/api/v1/telemetry/health`, `/api/v1/telemetry/pool`, `/api/v1/telemetry/queues`, and `/api/v1/telemetry/audit-stream`. They require Firebase JWT verification and an `admin`, `manager`, or `accountant` role. Responses carry the global correlation ID and system version `1.0.01`. Health reports database availability; pool reports active, idle, waiting, and configured maximum connections; queue metrics report pending payments, field collections, and variance batches.
+
+Audit streaming is read-only and ordered by `(created_at, id)` with bounded pagination and optional correlation filtering. Sensitive metadata keys and private identity, client, loan, borrower, token, secret, password, and key fields are redacted before response serialization. Financial history remains append-only because the telemetry layer performs no update or delete operation and only reads `audit_events`.
 
 The Stage 3 client verification reported **22/22 Vitest tests passing**, **0 TypeScript errors**, **0 ESLint warnings**, and a certified production build. No production backend code under `server/src/` was modified during Stage 3.
 
-Do not use production credentials, production borrower data, live payment providers, or real identity documents in local or test environments. Any backend change must preserve single-transaction financial actions, append-only history, strict double-entry balancing, idempotency, server-side authorization, and branch scope.
+Do not use production credentials, production borrower data, live payment providers, or real identity documents in local or test environments. Any backend change must preserve single-transaction financial actions, append-only history, strict double-entry balancing, idempotency, server-side authorization, and branch scope. The production guarantees are: PostgreSQL remains the authoritative financial source; every ledger transaction is balance-checked; payment and reconciliation commands remain atomic; webhook replay uses the original idempotency key; variance batches cannot auto-post or move capital pools; and telemetry exposes masked read models only.
