@@ -1,29 +1,29 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
 import { pool, withTransaction, insertAuditEvent } from './db.js';
 import { authMiddleware, type TokenVerifier } from './middleware/auth.js';
 import { requireBranchScope, requireRoles } from './middleware/authorization.js';
 import { postLedgerTransactionOnClient } from './services/ledger.js';
+import { SYSTEM_VERSION } from '../../shared/version.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
   app.register(cors, { origin: process.env.ALLOWED_ORIGINS?.split(',') ?? false });
   app.register(helmet);
-  app.register(sensible);
   app.register(rateLimit, { max: 60, timeWindow: '1 minute' });
 
   app.addHook('onRequest', async (request, reply) => {
     request.headers['x-correlation-id'] ??= randomUUID();
     reply.header('x-correlation-id', request.headers['x-correlation-id']);
+    reply.header('x-system-version', SYSTEM_VERSION);
   });
 
   app.get('/health', async (request) => {
     const result = await pool.query('SELECT 1 AS ok');
-    return { ok: true, data: { service: 'letsgrow-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'] };
+    return { ok: true, data: { service: 'letsgrow-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
 
   const auth = authMiddleware(options.tokenVerifier);
@@ -47,8 +47,8 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
       await insertAuditEvent(client, { actorUserId: actor.userId, action: 'stage1.command.completed', entityType: 'branch', entityId: body.branchId, correlationId: String(request.headers['x-correlation-id']), metadata: { transactionId: ledger.transactionId } });
       return ledger;
     });
-    if (!result) return reply.code(404).send({ ok: false, error: { code: 'BRANCH_NOT_FOUND', message: 'Branch not found' }, correlationId: request.headers['x-correlation-id'] });
-    return { ok: true, data: result, correlationId: request.headers['x-correlation-id'] };
+    if (!result) return reply.code(404).send({ ok: false, error: { code: 'BRANCH_NOT_FOUND', message: 'Branch not found' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
+    return { ok: true, data: result, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -56,7 +56,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
     const candidate = error as { statusCode?: number; message?: string };
     const status = candidate.statusCode && candidate.statusCode >= 400 ? candidate.statusCode : 500;
     const message = status === 500 ? 'Internal server error' : (candidate.message ?? 'Request failed');
-    reply.code(status).send({ ok: false, error: { code: status === 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR', message }, correlationId: request.headers['x-correlation-id'] });
+    reply.code(status).send({ ok: false, error: { code: status === 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR', message }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
   });
   return app;
 }

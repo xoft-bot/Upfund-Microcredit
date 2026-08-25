@@ -16,3 +16,4 @@ h1 { margin: 0; font-size: clamp(2rem, 8vw, 3.5rem); line-height: 1.05; }
 .status { display: flex; align-items: center; gap: .6rem; margin: 1.5rem 0; padding: .8rem 1rem; border-radius: .75rem; background: #e6fffa; color: #14532d; font-weight: 700; }
 .dot { width: .65rem; height: .65rem; border-radius: 999px; background: #2f855a; }
 .note { color: #627d98; line-height: 1.6; }
+.footer { margin-top: 1.5rem; color: #829ab1; font-size: .75rem; font-weight: 700; letter-spacing: .04em; }

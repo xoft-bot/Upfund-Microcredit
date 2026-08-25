@@ -14,6 +14,7 @@ function App() {
           <span>Implementation skeleton initialized</span>
         </div>
         <p className="note">Feature screens and payment integrations remain intentionally disabled until the ledger and security evidence gates pass.</p>
+        <footer className="footer">System version 1.0.01</footer>
       </section>
     </main>
   );

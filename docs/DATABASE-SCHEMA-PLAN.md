@@ -4,7 +4,7 @@
 
 The application must have one authoritative source for each financial fact. Operational read models may be denormalized for speed, but they must be derived from authoritative events and include an `asOf` timestamp and source version. No dashboard may independently recompute balances using a different formula.
 
-The pilot may use Firestore with server-side command handlers and a transaction ledger. The API contract must remain storage-neutral so a relational financial database can be introduced later without rewriting the frontend.
+Google Cloud SQL for PostgreSQL is authoritative from Stage 1 onward. Firebase services may support authentication, hosting, storage, messaging, and non-authoritative metadata, but Firestore must not become a competing source of truth for financial facts. The API contract remains storage-neutral so read models can evolve without rewriting the frontend.
 
 ## Identity and organization
 
@@ -40,4 +40,4 @@ Use separate collections for authoritative entities and bounded read models. Avo
 
 ## Migration boundary
 
-If the ledger later moves to PostgreSQL, preserve entity IDs, transaction IDs, event ordering, policy versions, audit links, and API response shapes. The frontend must not know whether a read model originated in Firestore, PostgreSQL, or a reporting warehouse.
+If reporting later moves to a read replica, reporting store, or warehouse, preserve entity IDs, transaction IDs, event ordering, policy versions, audit links, and API response shapes. PostgreSQL remains the authoritative financial and operational database unless a separately approved and tested provider migration occurs.
