@@ -27,7 +27,7 @@ The API now exposes `POST /api/v1/payments` and `POST /api/v1/reconciliations/po
 
 Batch reconciliation compares expected, recorded, and submitted logbook totals. A variance raises a fail-closed manager-override error and leaves no reconciliation row behind. A matched batch or explicitly manager-approved variance can proceed to realized-surplus allocation. The allocation engine never treats gross charges as deployable capital.
 
-The database-backed payment and reconciliation tests verify payment principal updates, receipt generation, balanced ledger totals, and variance rollback.
+The database-backed payment and reconciliation tests verify payment principal updates, receipt generation, balanced ledger totals, and variance rollback. Reconciliation approval now loads the persisted allocation policy under lock, requires all four capital pools to exist, locks those pool rows, updates their balances, records `pool_allocations`, and posts the corresponding balanced ledger transaction in the same transaction. Migration `004_collection_pool.sql` adds the explicit collection pool type.
 
 ## Verification
 
