@@ -6,7 +6,7 @@
 
 ## Version and commits
 
-The previous approved backend baseline is commit `7d2989f`. The current repository HEAD after the documentation-only handoff commit is `5be529f` (`5be529f` is the current short SHA at handoff). Documentation-only changes in this handoff do not alter backend behavior.
+The previous approved backend baseline is commit `7d2989f`. The handoff package was introduced in `5be529f`, and the current repository HEAD is `f710c59`. Documentation-only changes in this handoff do not alter backend behavior.
 
 Version `1.0.01` is defined in the package manifest and shared version contract. API telemetry headers, success and error envelopes, and the PWA footer must continue to expose `1.0.01`.
 
