@@ -46,7 +46,7 @@ The exact waterfall must be configurable and approved. The default implementatio
 
 ## Financial safety controls
 
-All postings require an actor, timestamp, currency, amount, account/pool, source event, policy version, correlation ID, and idempotency key. Amounts must be integer UGX values or integer minor units. No financial event may be physically deleted. A ledger period may be closed, after which changes require a controlled adjustment workflow.
+All postings require an actor, timestamp, currency, amount, account/pool, source event, policy version, correlation ID, and idempotency key. Amounts must be integer UGX values or integer minor units. Every journal entry must be balanced with strict double-entry invariants: total debits equal total credits, each line belongs to the same transaction, and no transaction may be posted partially. During payment posting and balance-affecting operations, use database transactions with row-level locks or an equivalent optimistic-version guard on the affected accounts/aggregates so concurrent submissions cannot create lost updates or negative capacity. No financial event may be physically deleted. A ledger period may be closed, after which changes require a controlled adjustment workflow.
 
 A daily reconciliation compares expected collections, digital postings, physical receipts, cash submitted, and mobile-money/bank settlement. Variances require a reason and review status. The system must prevent duplicate receipt IDs, duplicate provider references, duplicate offline local IDs, and duplicate idempotency keys.
 

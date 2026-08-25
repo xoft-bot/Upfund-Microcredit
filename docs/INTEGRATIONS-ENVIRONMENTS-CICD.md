@@ -44,7 +44,7 @@ Firebase Hosting’s CDN serves immutable frontend assets. Use content-hashed bu
 
 ## Scaling and load balancing
 
-Begin with managed serverless execution and paginated queries. Avoid hot aggregate documents by using append-only events, periodic snapshots, and carefully designed counters. Load-test collection posting, dashboard reads, exports, notifications, and offline synchronization. If reporting, ledger volume, or concurrency outgrows the pilot model, move heavy analytics to a reporting store and consider PostgreSQL for the authoritative financial ledger while preserving API contracts.
+Begin with managed backend execution, Cloud SQL for PostgreSQL, connection pooling, and paginated queries. Avoid hot aggregate rows/documents by using append-only events, periodic snapshots, and carefully designed counters. Load-test collection posting, dashboard reads, exports, notifications, and offline synchronization. If reporting volume grows, move heavy analytics to a reporting store or read replica, but PostgreSQL remains the authoritative financial ledger and operational database unless a separately approved, tested provider migration is completed.
 
 ## Availability and disaster recovery
 
