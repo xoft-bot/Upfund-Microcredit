@@ -26,12 +26,12 @@ The current loan and payment functions should not be treated as the new ledger e
 
 The current frontend is a React dashboard inside a larger vanilla SPA shell and includes club-specific four-tab navigation. It can provide reusable components and patterns, but the unified product should use a clear route and workspace model for admin, branch, officer, collector, finance, risk, and client contexts. The current screen system should be extended deliberately rather than forcing the microfinance workflows into the existing club navigation.
 
-## Recommended repository decision
+## Repository decision — approved direction
 
-Continue using the selected repository if the intention is for Letsgrow to become the operating platform and existing club functionality must remain available. Establish a bounded `microfinance` domain, add Phase 0 contracts under `docs/phase-0`, and keep legacy club modules isolated.
+The microfinance platform uses a completely separate private repository and separate Firebase environments from the investment-club product. The selected repository is `xoft-bot/Letsgrow-Microcredit`. The old investment-club repository is not a dependency and must not be copied into the new application.
 
-Create a new repository or separate Firebase project if the existing club product and the new lender are legally, operationally, or financially separate businesses. In either case, keep the same contract-first architecture and GitHub-to-Firebase deployment controls.
+Only general engineering lessons may be reused after review, such as logging conventions, PWA practices, testing patterns, and deployment knowledge. Do not copy old investment-club schemas, financial formulas, role rules, or business logic into the microcredit domain. This preserves two independent products: the investment club and the microcredit operating system.
 
 ## Current status after this analysis
 
-The repository now contains the unified requirements inventory, architecture/build assessment, permissions matrix, API contract outline, financial ledger specification, MVP roadmap, and this gap analysis under `docs/phase-0`. These documents should be reviewed before frontend or backend agents make domain changes.
+The new repository now contains the unified requirements inventory, architecture/build assessment, permissions matrix, API contract outline, financial ledger specification, MVP roadmap, master plan, database plan, security threat model, integrations plan, and this gap analysis under `docs/phase-0` and `docs/`. These documents should be reviewed before implementation agents write feature code.

@@ -74,7 +74,7 @@ Every command validates authentication, permission, branch scope, entity state, 
 
 The authoritative financial model must be event-oriented and append-only. Logical entities include users, roles, permissions, branches, clients, businesses, locations, KYC records, documents, references, guarantors, loan products, applications, loans, repayment schedules, payments, receipts, collections, ledger entries, expenses, reserves, growth capital, capital contributions, write-offs, recoveries, risk assessments, portfolio snapshots, notifications, audit events, configuration versions, reconciliation batches, and reports.
 
-Firestore is acceptable for a pilot if financial commands are server-authoritative, transactions are used correctly, and the model avoids pretending that a denormalized document is the complete accounting truth. A later relational ledger can be introduced behind the same API contract. There must be one authoritative source for each financial fact.
+PostgreSQL is the authoritative operational and financial store from the beginning. Firebase services are used for Authentication, Hosting, Storage, notifications, and supporting services. The API/backend layer is the only path between the frontend and PostgreSQL. A secondary cache or reporting projection may use other stores later, but there must be one authoritative source for each financial fact.
 
 Documents belong in controlled object storage with metadata, access scope, retention classification, and audit events. Do not store identity documents in GitHub, frontend bundles, logs, or unrestricted database fields.
 
@@ -98,16 +98,16 @@ Sustainability status requires CIR plus liquidity, reserve sufficiency, operatin
 |---|---|
 | 1. Frontend | Role-based React/TypeScript web/PWA with desktop management and mobile field workflows |
 | 2. API/backend logic | Typed commands, read models, domain engines, idempotency, state machines |
-| 3. Database/storage | Firestore or equivalent operational store, append-only ledger, object storage for documents |
+| 3. Database/storage | PostgreSQL as authoritative operational/financial store, append-only ledger, Firebase/object storage for documents |
 | 4. Authentication/permissions | Authenticated sessions, RBAC, branch scope, least privilege, dual control |
 | 5. Hosting/deployment | Firebase Hosting for the web build, controlled environment promotion |
-| 6. Cloud infrastructure | Firebase services initially; server functions/services and managed integrations |
+| 6. Cloud infrastructure | Firebase Auth/Hosting/Storage/supporting services plus managed PostgreSQL and backend runtime |
 | 7. Git/version control | New private GitHub repository, protected main, domain branches, review history |
 | 8. CI/CD | Build, types, lint, rules, schema, financial invariants, integration tests, preview and production gates |
 | 9. Application security | Threat model, validation, secure documents, no client ledger writes, audit, dependency review, secrets management |
 | 10. Rate limiting | Per-user, per-command, per-IP/device where appropriate; stricter limits on authentication and financial commands |
 | 11. Caching/CDN | Firebase Hosting CDN for static assets; short-lived safe read-model caching; never cache mutable authorization or financial command results incorrectly |
-| 12. Scaling/load balancing | Managed serverless scaling first; load tests, hot-document avoidance, pagination, indexes, later relational/reporting extraction if needed |
+| 12. Scaling/load balancing | Managed backend/PostgreSQL scaling first; load tests, indexes, pagination, connection pooling, read replicas/reporting extraction later |
 | 13. Error tracking/logging | Structured logs, correlation IDs, safe error envelopes, alerting, audit events, provider failure records |
 | 14. Availability/disaster recovery | Separate environments, backups/exports, restoration drills, replayable ledger events, outage/manual collection procedures |
 
@@ -120,7 +120,7 @@ The system should be designed around adapters, with credentials supplied only wh
 | Integration | Needed for pilot? | Secret location | Failure behavior |
 |---|---:|---|---|
 | Firebase Auth | Yes | Environment/managed provider | Block protected access; preserve session errors safely |
-| Firestore | Yes | Server-managed credentials | Fail closed for writes; show retry state |
+| PostgreSQL | Yes | Server-managed connection secret | Fail closed for writes; show retry state |
 | Cloud Storage | Yes for KYC documents | Server rules and environment | Keep metadata pending; do not lose document status |
 | SMS | Useful, not mandatory on day one | Server secret | Queue and retry; show delivery status |
 | Mobile money | Depends on disbursement/collection method | Server secret | Store pending provider state; reconcile manually |
@@ -141,9 +141,9 @@ The test suite must include partial payments, late payments, defaults, recoverie
 
 Stage 0 is planning only: approve the product requirements, schema, permissions, state machines, ledger, allocation policies, API contract, design system, environment matrix, threat model, and test plan.
 
-Stage 1 establishes the frontend shell, authentication screens, role-aware navigation, design tokens, route skeletons, typed mock transport, error/loading states, and the primary dashboard/client/loan/collection visual language. It does not invent backend semantics.
+Stage 1 establishes one coherent end-to-end skeleton: React/Vite PWA shell, backend API, PostgreSQL schema and migrations, Firebase authentication integration, authorization boundary, ledger primitives, audit events, validation, error handling, CI/CD, environment configuration, and financial invariant tests. The initial skeleton is built as one connected system so the coupled Loan → Schedule → Repayment → Ledger → Portfolio → PAR → Sustainability chain is not implemented as disconnected features.
 
-Stage 2 establishes the backend contract, authentication, roles, database schema, rules, migrations, command handlers, ledger primitives, audit, and financial invariant tests.
+Stage 2 independently reviews and hardens the frontend: role-aware navigation, design tokens, route skeletons, typed hooks, mock/real transport switch, loading/error states, mobile field flows, and the dashboard/client/loan/collection visual language.
 
 Stage 3 connects the frontend to development APIs and delivers clients, KYC, loan products, applications, approvals, disbursement, schedules, payments, receipts, collections, and reconciliation.
 
@@ -155,13 +155,13 @@ Stage 6 adds read-only AI/MCP analytics and simulation only after the core opera
 
 ## 13. Agent collaboration model
 
-The frontend agent and backend agent should not work from separate interpretations. The shared GitHub repository contains the contract and test fixtures. The frontend agent owns UI, hooks, route composition, accessibility, and mock transport. The backend agent owns commands, schema, rules, ledger, integrations, and server tests. Cross-boundary changes update contracts and tests together.
+The initial skeleton should be built by one agent as a coherent end-to-end system. It must establish the repository structure, React/Vite PWA, API contracts, authentication, authorization, PostgreSQL schema and migrations, ledger architecture, validation, error handling, audit logging, tests, CI/CD, and environment configuration. I then independently review and harden the frontend, API contracts, architecture, and security. After the foundation is stable, work may be divided by domain, but the contract and financial invariants remain shared.
 
 The first coding milestone should be a reviewable Phase 0 package, not a dashboard. Once Phase 0 is approved, frontend work and backend work can proceed in parallel against the contract, followed by a deliberate integration stage.
 
 ## 14. Decision gate before code
 
-Before implementation begins, approve: the new repository name and ownership, Firebase project/environment names, whether Firestore is sufficient for the pilot ledger, the first three loan products, the payment waterfall, allocation policy version 1, PAR and net-credit-loss definitions, role/branch permissions, offline conflict policy, notification providers, data retention policy, and the exact pilot acceptance test.
+Approved: a completely separate private repository; Firebase for Authentication, Hosting, Storage, notifications, and supporting services; PostgreSQL as the authoritative operational and financial database; React/Vite PWA; one coherent end-to-end skeleton before work is split; manual cash and manual mobile-money recording with reconciliation before live provider APIs; and a ledger-first design with server-only financial mutations. Before feature implementation begins, finalize the PostgreSQL provider, Firebase project/environment names, first three loan products, payment waterfall, allocation policy version 1, PAR and net-credit-loss definitions, role/branch permissions, offline conflict policy, notification providers, data retention policy, and exact pilot acceptance test.
 
 This document and the Phase 0 artifacts are the plan. Any agent prompt that conflicts with them must be corrected before code is accepted.
 

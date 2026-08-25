@@ -4,7 +4,7 @@ Build the **Progressive Credit and Microfinance Operating System** described in 
 
 The system serves a Uganda-based short-cycle lender working with informal businesses. It must operate for an initial pilot of approximately 30–50 borrowers, one branch, and a small officer team, while preserving an architecture path to thousands of clients. It must support onboarding, KYC, business and location verification, references and guarantors, configurable loan products, approval, disbursement, daily collections, digital receipts, offline field capture, physical-logbook reconciliation, recovery, write-offs, risk, PAR, credit graduation, accounting, four capital pools, liquidity, profitability, management dashboards, reports, alerts, backup, and a read-only AI analytics layer.
 
-Use the existing repository foundation where appropriate, but keep legacy investment-club semantics separate from the new microfinance domain. Reuse infrastructure patterns only after checking that their rules and formulas do not conflict with this specification.
+Build only in the new `xoft-bot/Letsgrow-Microcredit` repository. Do not import or mix the investment-club repository’s source code, schema, financial formulas, roles, or data. General engineering lessons may be reused only after review, and every microfinance domain rule must be defined independently.
 
 ## Non-negotiable financial rule
 
@@ -14,13 +14,13 @@ Build the financial ledger and capital-allocation engine before treating dashboa
 
 ## Required architecture
 
-Use a mobile-first React/TypeScript frontend with a route/workspace model, Firebase Authentication, Firestore or a carefully designed relational supplement, Cloud Storage, server-side functions or services, App Check, messaging, GitHub version control, Firebase Hosting, and secondary Google Sheets export/backup. Keep financial commands behind an API or callable-function boundary. Do not permit client-side writes to authoritative financial records.
+Use a mobile-first React/Vite TypeScript PWA with a route/workspace model, Firebase Authentication, Firebase Hosting, Firebase Cloud Storage, supporting Firebase services, a managed PostgreSQL database, and a server-side API/backend layer. PostgreSQL is the authoritative operational and financial store. Keep all financial commands behind the API. Do not permit client-side writes to PostgreSQL or authoritative financial records.
 
 The shared contracts are `unified-requirements-inventory.md`, `permissions-matrix.md`, `api-contract-outline.md`, `financial-ledger-spec.md`, `mvp-roadmap.md`, and `existing-repository-gap-analysis.md`. Any implementation must conform to them or update them through review.
 
 ## Required delivery sequence
 
-First produce and review requirements, schema, relationships, permissions, state transitions, financial invariants, API schemas, allocation policies, and test fixtures. Then implement authentication, roles, clients, KYC, businesses, and loan products. Next implement applications, approval, disbursement, schedules, payments, receipts, collections, offline synchronization, and reconciliation. Then add risk/PAR/credit graduation, followed by accounting/capital recycling/liquidity/CIR/self-sustainability, management intelligence, AI/MCP, and simulation.
+First produce and review requirements, PostgreSQL schema, relationships, permissions, state transitions, financial invariants, API schemas, allocation policies, environment strategy, security threat model, and test fixtures. Then build one coherent end-to-end skeleton containing the React/Vite PWA, API, authentication, authorization, PostgreSQL migrations, ledger primitives, audit, validation, error handling, CI/CD, and environment configuration. After that, implement clients/KYC/products, then applications/approval/disbursement/schedules/manual payments/receipts/collections/reconciliation. Add offline operation, risk/PAR/credit graduation, accounting/capital recycling/liquidity/CIR/self-sustainability, management intelligence, AI/MCP, and simulation in controlled stages.
 
 ## Acceptance criteria
 
