@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import { ErrorBoundary } from './components/common/ErrorBoundary.js';
 import { CollectorRouteView } from './components/field/CollectorRouteView.js';
 import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
 import { ManagerVarianceDashboard, type VarianceBatch } from './components/field/ManagerVarianceDashboard.js';
@@ -18,4 +19,4 @@ function App() {
   return <main className="shell"><header className="app-header"><p className="eyebrow">FIELD OPERATIONS · STAGE 3</p><h1>Letsgrow Microcredit</h1><p className="lede">Offline-ready collections with server-authoritative posting.</p></header><div className="workflow-grid"><CollectorRouteView queue={queue} routeName="Kampala Central route" expectedAmount={100000} records={records} onCollect={() => document.getElementById('collection-form')?.scrollIntoView({ behavior: 'smooth' })} /><div id="collection-form"><FieldCollectionForm queue={queue} collectorId="collector-demo" branchId="branch-demo" deviceId="device-demo" onQueued={addRecord} /></div>{lastRecord && <ReceiptPreview clientId={lastRecord.clientId} loanId={lastRecord.loanId} amount={lastRecord.amount} collectorId={lastRecord.collectorId} capturedAt={lastRecord.capturedAt} status={lastRecord.status} receiptReference={lastRecord.receiptReference} principalAmount={lastRecord.amount} />}</div><ManagerVarianceDashboard batches={[batch]} getToken={async () => ''} onResolved={() => undefined} /><footer className="footer">System version 1.0.01 · Backend routes frozen</footer></main>;
 }
 
-createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
+createRoot(document.getElementById('root')!).render(<StrictMode><ErrorBoundary><App /></ErrorBoundary></StrictMode>);

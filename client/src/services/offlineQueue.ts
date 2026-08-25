@@ -1,4 +1,5 @@
 import type { CollectionBatch, CollectionStatus, FieldCollectionRecord, QueueSnapshot, SyncState } from '../types/field-ops.js';
+import { telemetry } from './telemetry.js';
 
 const databaseName = 'letsgrow-field-ops';
 const databaseVersion = 1;
@@ -15,7 +16,7 @@ function now(): string { return new Date().toISOString(); }
 function isBrowser(): boolean { return typeof window !== 'undefined'; }
 function readFallback(): QueueSnapshot { if (!isBrowser()) return { records: [], batches: [] }; const value = window.localStorage.getItem(fallbackKey); return value ? JSON.parse(value) as QueueSnapshot : { records: [], batches: [] }; }
 function writeFallback(snapshot: QueueSnapshot): void { if (isBrowser()) window.localStorage.setItem(fallbackKey, JSON.stringify(snapshot)); }
-function syncStateFor(status: CollectionStatus): SyncState { return status === 'Queued' ? 'queued' : status === 'Syncing' ? 'syncing' : status === 'Posted' ? 'succeeded' : status === 'Rejected' ? 'failed' : 'local'; }
+function syncStateFor(status: CollectionStatus): SyncState { return status === 'Queued' || status === 'Pending reconciliation' ? 'queued' : status === 'Syncing' ? 'syncing' : status === 'Posted' ? 'succeeded' : status === 'Rejected' ? 'failed' : 'local'; }
 
 export class OfflineQueue {
   private readonly processPayment: PaymentSync;
@@ -91,15 +92,19 @@ export class OfflineQueue {
     if (this.processing || (isBrowser() && !navigator.onLine)) return;
     this.processing = true;
     try {
-      for (const record of (await this.getRecords()).filter((item) => item.status === 'Queued' || item.status === 'Needs review')) {
+      for (const record of (await this.getRecords()).filter((item) => item.status === 'Queued' || item.status === 'Pending reconciliation' || item.status === 'Needs review')) {
+        const startedAt = performance.now();
+        telemetry.capture('queue.sync_started', { localId: record.localId, status: record.status }, { correlationId: record.correlationId });
         await this.updateStatus(record.localId, 'Syncing');
         try {
           const response = await this.processPayment({ ...record, status: 'Syncing', syncState: 'syncing' });
-          if (response.ok) await this.updateStatus(record.localId, 'Posted');
-          else await this.updateStatus(record.localId, response.error?.code === 'CONFLICT' ? 'Needs review' : 'Rejected', response.error?.message);
+          const syncLatencyMs = Math.round(performance.now() - startedAt);
+          if (response.ok) { await this.updateStatus(record.localId, 'Posted'); telemetry.capture('queue.sync_succeeded', { localId: record.localId, status: 'Posted' }, { correlationId: record.correlationId, syncLatencyMs }); }
+          else { const status = response.error?.code === 'CONFLICT' ? 'Needs review' : 'Rejected'; await this.updateStatus(record.localId, status, response.error?.message); telemetry.capture('queue.sync_rejected', { localId: record.localId, status, errorCode: response.error?.code }, { correlationId: record.correlationId, syncLatencyMs }); }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'SYNC_FAILED';
           await this.updateStatus(record.localId, 'Queued', message);
+          telemetry.capture('queue.sync_failed', { localId: record.localId, error: message }, { correlationId: record.correlationId, syncLatencyMs: Math.round(performance.now() - startedAt) });
         }
       }
     } finally { this.processing = false; }
