@@ -32,7 +32,7 @@ Bearer token → Firebase ID-token verification → role guard → branch guard
 
 The migration creates all Stage 1 core tables and unique constraints for Firebase UIDs, client references, idempotency keys, payment receipt references, repayment schedule dates, and capital-pool identity. Ledger transaction and entry tables have database triggers that reject updates and deletes. A deferred constraint trigger verifies that each ledger transaction is balanced at commit.
 
-The ledger service rejects non-positive or unsafe integer amounts, requires at least two lines, checks debit/credit equality, performs idempotency lookup under `FOR UPDATE`, inserts all journal lines and the ledger audit event in one transaction, and returns the existing transaction for a repeated idempotency key. The Stage 1 endpoint uses the same database transaction for branch locking, ledger posting, and command audit persistence.
+The ledger service rejects non-positive or unsafe integer amounts, requires at least two lines, checks debit/credit equality, uses `INSERT ... ON CONFLICT DO NOTHING` followed by a locked lookup to resolve concurrent idempotency races, inserts all journal lines and the ledger audit event in one transaction, and returns the existing transaction for a repeated idempotency key. The Stage 1 endpoint uses the same database transaction for branch locking, ledger posting, and command audit persistence.
 
 The authentication middleware fails closed when the Bearer token is absent or invalid, uses Firebase Admin token verification with revocation checking, and accepts only known roles. The endpoint requires `admin` or `manager` and denies a non-admin request outside the verified branch claim. Frontend visibility is not used as a security boundary.
 
@@ -47,7 +47,7 @@ npm test
 npm run build
 ```
 
-Current test result: **4 tests passed**. The tests cover absent authentication, cross-branch denial, unbalanced journal rejection, and balanced journal acceptance.
+Current test result: **4 tests passed**. The tests cover absent authentication, cross-branch denial, unbalanced journal rejection, and balanced journal acceptance. Type-checking, linting, and the production build also pass.
 
 ## Database verification status
 

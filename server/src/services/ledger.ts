@@ -30,19 +30,22 @@ export function assertBalanced(lines: LedgerLine[]): void {
 export async function postLedgerTransactionOnClient(client: DbClient, input: PostLedgerInput): Promise<{ transactionId: string; created: boolean }> {
   assertBalanced(input.lines);
   const correlationId = input.correlationId ?? randomUUID();
-  const existing = await client.query<{ id: string }>(
-    'SELECT id FROM ledger_transactions WHERE idempotency_key = $1 FOR UPDATE',
-    [input.idempotencyKey],
-  );
-  if (existing.rowCount) return { transactionId: existing.rows[0].id, created: false };
-
   const transaction = await client.query<{ id: string }>(
     `INSERT INTO ledger_transactions
       (source_type, source_id, idempotency_key, correlation_id, posted_by, description)
      VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (idempotency_key) DO NOTHING
      RETURNING id`,
     [input.sourceType, input.sourceId, input.idempotencyKey, correlationId, input.actorUserId, input.description],
   );
+  if (!transaction.rowCount) {
+    const existing = await client.query<{ id: string }>(
+      'SELECT id FROM ledger_transactions WHERE idempotency_key = $1 FOR UPDATE',
+      [input.idempotencyKey],
+    );
+    if (!existing.rowCount) throw new Error('IDEMPOTENCY_RESOLUTION_FAILED');
+    return { transactionId: existing.rows[0].id, created: false };
+  }
   const transactionId = transaction.rows[0].id;
   for (const line of input.lines) {
     await client.query(
