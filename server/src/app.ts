@@ -27,7 +27,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
 
   app.get('/health', async (request) => {
     const result = await pool.query('SELECT 1 AS ok');
-    return { ok: true, data: { service: 'letsgrow-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+    return { ok: true, data: { service: 'upfund-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
 
   registerPaymentRoutes(app, options.tokenVerifier);
