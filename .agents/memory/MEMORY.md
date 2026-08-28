@@ -1,0 +1,1 @@
+- [Mockup sandbox setup](mockup-sandbox-setup.md) — newly created preview artifacts may need isolated dependencies installed before Vite can start.
