@@ -3,6 +3,7 @@ import { insertAuditEvent, withTransaction } from '../db.js';
 import { postLedgerTransactionOnClient } from './ledger.js';
 import { allocateRealizedSurplus } from './allocation.js';
 import { calculateReconciliation } from './reconciliation.js';
+import { realizedChargeFromComponents } from './payment-allocation.js';
 
 export interface ReconciliationPostInput {
   actorUserId: string;
@@ -56,7 +57,12 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     [reconciliationId],
   );
   const totals = paymentTotals.rows[0];
-  const realizedCharge = Number(totals.penalty_amount) + Number(totals.interest_amount);
+   const realizedCharge = realizedChargeFromComponents({
+     principalAmount: Number(totals.principal_amount),
+     penaltyAmount: Number(totals.penalty_amount),
+     interestAmount: Number(totals.interest_amount),
+     overpaymentAmount: Number(totals.overpayment_amount),
+   });
   const allocation = allocateRealizedSurplus(realizedCharge, { version: policy.version, creditLossBps: Number(policy.credit_loss_bps), operatingBps: Number(policy.operating_bps), collectionBps: Number(policy.collection_bps), growthBps: Number(policy.growth_bps) });
   const pools = await client.query<Pool>(`SELECT id, pool_type, balance FROM capital_pools WHERE branch_id = $1 AND pool_type IN ('credit_loss_reserve', 'operating_reserve', 'collection', 'growth') ORDER BY pool_type FOR UPDATE`, [input.branchId]);
   if (pools.rowCount !== 4) throw new Error('CAPITAL_POOLS_NOT_INITIALIZED');

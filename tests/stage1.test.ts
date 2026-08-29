@@ -3,10 +3,11 @@ import { buildApp } from '../server/src/app.js';
 import { assertBalanced } from '../server/src/services/ledger.js';
 
 const validVerifier = vi.fn(async () => ({ uid: 'user-1', role: 'manager', branchId: 'branch-1' }) as never);
+const validUserResolver = vi.fn(async () => ({ dbUserId: 'db-user-1', firebaseUid: 'user-1', role: 'manager' as const, branchId: 'branch-1' }));
 
 describe('Stage 1 security boundary', () => {
   it('fails closed when the bearer token is absent', async () => {
-    const app = buildApp({ tokenVerifier: validVerifier });
+    const app = buildApp({ tokenVerifier: validVerifier, userResolver: validUserResolver });
     const response = await app.inject({ method: 'POST', url: '/api/stage1/commands/audit-ledger', payload: { branchId: 'branch-1', idempotencyKey: 'missing-auth' } });
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe('UNAUTHENTICATED');
@@ -15,7 +16,7 @@ describe('Stage 1 security boundary', () => {
   });
 
   it('rejects a valid user outside the requested branch', async () => {
-    const app = buildApp({ tokenVerifier: validVerifier });
+    const app = buildApp({ tokenVerifier: validVerifier, userResolver: validUserResolver });
     const response = await app.inject({ method: 'POST', url: '/api/stage1/commands/audit-ledger', headers: { authorization: 'Bearer test-token' }, payload: { branchId: 'branch-2', idempotencyKey: 'branch-scope-1' } });
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe('BRANCH_SCOPE_DENIED');

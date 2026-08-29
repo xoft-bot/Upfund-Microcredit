@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { authMiddleware, type TokenVerifier } from '../middleware/auth.js';
+import { authMiddleware, type TokenVerifier, type UserResolver } from '../middleware/auth.js';
 import { requireBranchScope, requireRoles } from '../middleware/authorization.js';
 import { postManualPayment } from '../services/payment-posting.js';
 import { SYSTEM_VERSION } from '../../../shared/version.js';
@@ -17,9 +17,9 @@ interface PaymentBody {
   capturedAt?: string;
 }
 
-export function registerPaymentRoutes(app: FastifyInstance, verifier?: TokenVerifier): void {
+export function registerPaymentRoutes(app: FastifyInstance, verifier?: TokenVerifier, resolveUser?: UserResolver): void {
   app.post<{ Body: PaymentBody }>('/api/v1/payments', {
-    preHandler: [authMiddleware(verifier), requireRoles(['admin', 'manager', 'officer', 'collector']), requireBranchScope((request) => (request.body as PaymentBody | undefined)?.branchId)],
+    preHandler: [authMiddleware(verifier, resolveUser), requireRoles(['admin', 'manager', 'officer', 'collector']), requireBranchScope((request) => (request.body as PaymentBody | undefined)?.branchId)],
     schema: {
       body: {
         type: 'object',

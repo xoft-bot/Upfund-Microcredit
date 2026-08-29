@@ -4,7 +4,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
 import { pool, withTransaction, insertAuditEvent } from './db.js';
-import { authMiddleware, type TokenVerifier } from './middleware/auth.js';
+import { authMiddleware, type TokenVerifier, type UserResolver } from './middleware/auth.js';
 import { requireBranchScope, requireRoles } from './middleware/authorization.js';
 import { postLedgerTransactionOnClient } from './services/ledger.js';
 import { SYSTEM_VERSION } from '../../shared/version.js';
@@ -12,8 +12,9 @@ import { registerPaymentRoutes } from './routes/payments.js';
 import { registerReconciliationRoutes } from './routes/reconciliations.js';
 import { registerWebhookRoutes } from './routes/webhookRoutes.js';
 import { registerTelemetryRoutes } from './routes/telemetryRoutes.js';
+import { registerCollectionQueryRoutes } from './routes/collectionQueries.js';
 
-export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
+export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
   app.register(cors, { origin: process.env.ALLOWED_ORIGINS?.split(',') ?? false });
   app.register(helmet);
@@ -30,11 +31,12 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier } = {}) {
     return { ok: true, data: { service: 'upfund-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
 
-  registerPaymentRoutes(app, options.tokenVerifier);
-  registerReconciliationRoutes(app, options.tokenVerifier);
+  registerPaymentRoutes(app, options.tokenVerifier, options.userResolver);
+  registerReconciliationRoutes(app, options.tokenVerifier, options.userResolver);
   registerWebhookRoutes(app);
-  registerTelemetryRoutes(app, options.tokenVerifier);
-  const auth = authMiddleware(options.tokenVerifier);
+  registerTelemetryRoutes(app, options.tokenVerifier, options.userResolver);
+  registerCollectionQueryRoutes(app, options.tokenVerifier, options.userResolver);
+  const auth = authMiddleware(options.tokenVerifier, options.userResolver);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],
     schema: {

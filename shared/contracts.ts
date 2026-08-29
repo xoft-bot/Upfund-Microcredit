@@ -2,6 +2,7 @@ export type UserRole = 'admin' | 'manager' | 'officer' | 'collector' | 'accounta
 
 export interface Actor {
   userId: string;
+  dbUserId: string;
   firebaseUid: string;
   role: UserRole;
   branchId: string | null;

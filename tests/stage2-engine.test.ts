@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { allocateRealizedSurplus } from '../server/src/services/allocation.js';
-import { allocatePaymentWaterfall } from '../server/src/services/payment-allocation.js';
+import { allocatePaymentWaterfall, realizedChargeFromComponents } from '../server/src/services/payment-allocation.js';
 import { assertApplicationTransition, assertKycTransition, assertLoanTransition, assertPaymentTransition, assertReconciliationTransition } from '../server/src/services/state-machines.js';
 
 describe('Stage 2 state machines', () => {
@@ -67,5 +67,9 @@ describe('Task 3 payment waterfall', () => {
       overpaymentAmount: 10_000,
       chargeAmount: 25_000,
     });
+  });
+
+  it('keeps principal and overpayment out of realized charge allocation', () => {
+    expect(realizedChargeFromComponents({ principalAmount: 100_000, penaltyAmount: 5_000, interestAmount: 20_000, overpaymentAmount: 10_000 })).toBe(25_000);
   });
 });

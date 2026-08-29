@@ -6,8 +6,10 @@ import { runReconciliationCycle, type Candidate } from '../server/src/jobs/recon
 import { maskTelemetry } from '../server/src/services/telemetryStream.js';
 import { pool } from '../server/src/db.js';
 import type { TokenVerifier } from '../server/src/middleware/auth.js';
+import type { UserResolver } from '../server/src/middleware/auth.js';
 
 const verifier: TokenVerifier = vi.fn(async () => ({ uid: 'manager-1', role: 'manager', branchId: 'branch-1' } as never));
+const userResolver: UserResolver = vi.fn(async () => ({ dbUserId: 'db-manager-1', firebaseUid: 'manager-1', role: 'manager' as const, branchId: 'branch-1' }));
 const payload = { event: 'charge.completed', data: { id: 77, tx_ref: 'TX-STAGE4-1', amount: 5000, currency: 'UGX', status: 'successful', meta: { client_id: 'client-1', loan_id: 'loan-1', branch_id: 'branch-1' } } };
 const paymentResult = { paymentId: 'payment-1', receiptReference: 'RCT-1', principalAmount: 5000, chargeAmount: 0, outstandingPrincipal: 95000, loanStatus: 'active', ledgerTransactionId: 'ledger-1', created: true };
 
@@ -28,7 +30,7 @@ describe('Stage 4 integration flow', () => {
   });
 
   it('protects telemetry endpoints and masks secrets in audit output', async () => {
-    const query = vi.spyOn(pool, 'query').mockImplementation(async (sql: string) => { if (sql === 'SELECT 1') return { rows: [{ '?column?': 1 }], rowCount: 1 } as never; if (sql.includes('COUNT(*)')) return { rows: [{ pending_payments: '2', pending_field_collections: '1', variance_batches: '3' }], rowCount: 1 } as never; return { rows: [{ id: 'audit-1', action: 'login', entity_type: 'user', entity_id: 'user-1', correlation_id: 'corr-1', metadata: { token: 'secret', national_id: 'N-1', borrower_name: 'Borrower One', phone_number: '+256700000000', safe: 'ok' }, created_at: new Date('2026-08-25T00:00:00Z') }], rowCount: 1 } as never; }); const app = Fastify(); registerTelemetryRoutes(app, verifier); await app.ready();
+    const query = vi.spyOn(pool, 'query').mockImplementation(async (sql: string) => { if (sql === 'SELECT 1') return { rows: [{ '?column?': 1 }], rowCount: 1 } as never; if (sql.includes('COUNT(*)')) return { rows: [{ pending_payments: '2', pending_field_collections: '1', variance_batches: '3' }], rowCount: 1 } as never; return { rows: [{ id: 'audit-1', action: 'login', entity_type: 'user', entity_id: 'user-1', correlation_id: 'corr-1', metadata: { token: 'secret', national_id: 'N-1', borrower_name: 'Borrower One', phone_number: '+256700000000', safe: 'ok' }, created_at: new Date('2026-08-25T00:00:00Z') }], rowCount: 1 } as never; }); const app = Fastify(); registerTelemetryRoutes(app, verifier, userResolver); await app.ready();
     expect((await app.inject({ method: 'GET', url: '/api/v1/telemetry/health' })).statusCode).toBe(401); const health = await app.inject({ method: 'GET', url: '/api/v1/telemetry/health', headers: { authorization: 'Bearer valid', 'x-correlation-id': 'telemetry-corr' } }); const queues = await app.inject({ method: 'GET', url: '/api/v1/telemetry/queues', headers: { authorization: 'Bearer valid' } }); const audit = await app.inject({ method: 'GET', url: '/api/v1/telemetry/audit-stream?limit=10', headers: { authorization: 'Bearer valid' } });
     expect(health.statusCode).toBe(200); expect(health.json().version).toBe('1.0.01'); expect(queues.json().data).toEqual({ pendingPayments: 2, pendingFieldCollections: 1, varianceBatches: 3 }); expect(audit.json().data[0].metadata).toEqual({ token: '[REDACTED]', national_id: '[REDACTED]', borrower_name: '[REDACTED]', phone_number: '[REDACTED]', safe: 'ok' }); expect(query).toHaveBeenCalled(); await app.close();
   });

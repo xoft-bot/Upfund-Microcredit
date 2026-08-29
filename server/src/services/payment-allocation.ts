@@ -13,6 +13,13 @@ export interface PaymentWaterfallResult {
   chargeAmount: number;
 }
 
+export interface PaymentComponentTotals {
+  principalAmount: number;
+  penaltyAmount: number;
+  interestAmount: number;
+  overpaymentAmount: number;
+}
+
 function assertNonNegativeInteger(value: number, code: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(code);
 }
@@ -38,4 +45,9 @@ export function allocatePaymentWaterfall(input: PaymentWaterfallInput): PaymentW
     overpaymentAmount,
     chargeAmount: penaltyAmount + interestAmount,
   };
+}
+
+export function realizedChargeFromComponents(input: PaymentComponentTotals): number {
+  Object.values(input).forEach((value) => assertNonNegativeInteger(value, 'INVALID_PAYMENT_COMPONENT'));
+  return input.penaltyAmount + input.interestAmount;
 }
