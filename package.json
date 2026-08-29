@@ -8,12 +8,13 @@
     "dev:server": "tsx server/src/index.ts",
     "dev:client": "vite --config client/vite.config.ts",
     "build": "tsc -p tsconfig.json && vite build --config client/vite.config.ts",
-    "lint": "eslint . --ext .ts,.tsx --ignore-pattern node_modules --ignore-pattern client/dist",
+    "lint": "eslint client/src server/src shared tests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:migrate": "tsx server/src/db/migrate.ts",
-    "db:check": "tsx server/src/db/check-schema.ts"
+    "db:check": "tsx server/src/db/check-schema.ts",
+    "db:seed": "tsx server/src/db/seed.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

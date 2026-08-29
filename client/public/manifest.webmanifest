@@ -1,0 +1,10 @@
+{
+  "name": "Upfund Microcredit Field Operations",
+  "short_name": "Upfund",
+  "description": "Offline-ready field collections with server-authoritative posting.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#102a43",
+  "icons": []
+}

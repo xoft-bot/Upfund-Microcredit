@@ -50,4 +50,12 @@ export interface QueueSnapshot {
   records: FieldCollectionRecord[];
   batches: CollectionBatch[];
   lastProcessedAt?: string;
+  metrics?: QueueMetrics;
+}
+
+export interface QueueMetrics {
+  queued: number;
+  syncing: number;
+  rejected: number;
+  conflict: number;
 }

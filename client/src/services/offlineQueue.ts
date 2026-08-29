@@ -1,4 +1,4 @@
-import type { CollectionBatch, CollectionStatus, FieldCollectionRecord, QueueSnapshot, SyncState } from '../types/field-ops.js';
+import type { CollectionBatch, CollectionStatus, FieldCollectionRecord, QueueMetrics, QueueSnapshot, SyncState } from '../types/field-ops.js';
 import { telemetry } from './telemetry.js';
 import { ApiRequestError, postPayment } from './api.js';
 
@@ -13,6 +13,7 @@ type QueueEvent = { id?: number; localId: string; kind: 'recorded' | 'status'; r
 type SyncResponse = { ok: boolean; data?: { receiptReference?: string }; error?: { code?: string; message?: string } };
 type PaymentSync = (record: FieldCollectionRecord) => Promise<SyncResponse>;
 type TokenProvider = () => Promise<string | undefined>;
+type QueueChangeListener = (snapshot: QueueSnapshot) => void;
 
 function now(): string { return new Date().toISOString(); }
 function isBrowser(): boolean { return typeof window !== 'undefined'; }
@@ -31,32 +32,51 @@ export class OfflineQueue {
   private database?: IDBDatabase;
   private processing = false;
   private onlineHandler?: () => void;
+  private opening?: Promise<void>;
+  private readonly listeners = new Set<QueueChangeListener>();
 
   constructor(processPayment: PaymentSync) { this.processPayment = processPayment; }
 
   async open(): Promise<void> {
-    if (!isBrowser() || !('indexedDB' in window)) return;
-    this.database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = window.indexedDB.open(databaseName, databaseVersion);
-      request.onerror = () => reject(request.error ?? new Error('INDEXED_DB_OPEN_FAILED'));
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(eventStore)) db.createObjectStore(eventStore, { keyPath: 'id', autoIncrement: true });
-        if (!db.objectStoreNames.contains(stateStore)) db.createObjectStore(stateStore, { keyPath: 'localId' });
-        if (!db.objectStoreNames.contains(batchStore)) db.createObjectStore(batchStore, { keyPath: 'localId' });
-      };
-      request.onsuccess = () => resolve(request.result);
-    });
+    if (this.opening) return this.opening;
+    this.opening = (async () => {
+      if (!isBrowser() || !('indexedDB' in window)) return;
+      this.database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = window.indexedDB.open(databaseName, databaseVersion);
+        request.onerror = () => reject(request.error ?? new Error('INDEXED_DB_OPEN_FAILED'));
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(eventStore)) db.createObjectStore(eventStore, { keyPath: 'id', autoIncrement: true });
+          if (!db.objectStoreNames.contains(stateStore)) db.createObjectStore(stateStore, { keyPath: 'localId' });
+          if (!db.objectStoreNames.contains(batchStore)) db.createObjectStore(batchStore, { keyPath: 'localId' });
+        };
+        request.onsuccess = () => resolve(request.result);
+      });
+    })();
+    return this.opening;
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (!isBrowser()) return;
+    await this.open();
+    if (this.onlineHandler) return;
     this.onlineHandler = () => { void this.processQueued(); };
     window.addEventListener('online', this.onlineHandler);
-    if (navigator.onLine) void this.processQueued();
+    if (navigator.onLine) await this.processQueued();
   }
 
   stop(): void { if (this.onlineHandler) window.removeEventListener('online', this.onlineHandler); this.onlineHandler = undefined; }
+
+  subscribe(listener: QueueChangeListener): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+
+  async getSnapshot(): Promise<QueueSnapshot> {
+    const [records, batches] = await Promise.all([this.getRecords(), this.getBatches()]);
+    return { records, batches, metrics: metricsFor(records) };
+  }
+
+  getMetrics(records: FieldCollectionRecord[]): QueueMetrics { return metricsFor(records); }
+
+  async retry(): Promise<void> { await this.open(); await this.processQueued(); }
 
   async enqueue(record: FieldCollectionRecord): Promise<void> {
     const event: QueueEvent = { localId: record.localId, kind: 'recorded', record, at: now() };
@@ -64,13 +84,14 @@ export class OfflineQueue {
   }
 
   async enqueueBatch(batch: CollectionBatch): Promise<void> {
-    if (!this.database) { const snapshot = readFallback(); snapshot.batches = [...snapshot.batches.filter((item) => item.localId !== batch.localId), batch]; snapshot.lastProcessedAt = now(); writeFallback(snapshot); return; }
+    if (!this.database) { const snapshot = readFallback(); snapshot.batches = [...snapshot.batches.filter((item) => item.localId !== batch.localId), batch]; snapshot.lastProcessedAt = now(); writeFallback(snapshot); await this.notify(); return; }
     await new Promise<void>((resolve, reject) => {
       const transaction = this.database!.transaction([batchStore], 'readwrite');
       transaction.objectStore(batchStore).put(batch);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('BATCH_WRITE_FAILED'));
     });
+    await this.notify();
   }
 
   async updateBatchStatus(localId: string, status: CollectionStatus, lastError?: string): Promise<void> {
@@ -128,7 +149,7 @@ export class OfflineQueue {
   }
 
   private async append(event: QueueEvent, state: FieldCollectionRecord): Promise<void> {
-    if (!this.database) { const snapshot = readFallback(); snapshot.records = [...snapshot.records.filter((item) => item.localId !== state.localId), state]; snapshot.lastProcessedAt = now(); writeFallback(snapshot); return; }
+    if (!this.database) { const snapshot = readFallback(); snapshot.records = [...snapshot.records.filter((item) => item.localId !== state.localId), state]; snapshot.lastProcessedAt = now(); writeFallback(snapshot); await this.notify(); return; }
     await new Promise<void>((resolve, reject) => {
       const transaction = this.database!.transaction([eventStore, stateStore], 'readwrite');
       transaction.objectStore(eventStore).add(event);
@@ -136,6 +157,7 @@ export class OfflineQueue {
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('QUEUE_WRITE_FAILED'));
     });
+    await this.notify();
   }
 
   private async readIndexedRecords(): Promise<FieldCollectionRecord[]> {
@@ -145,6 +167,22 @@ export class OfflineQueue {
       request.onerror = () => reject(request.error ?? new Error('QUEUE_READ_FAILED'));
     });
   }
+
+  private async notify(): Promise<void> {
+    if (!this.listeners.size) return;
+    const snapshot = await this.getSnapshot();
+    this.listeners.forEach((listener) => listener(snapshot));
+  }
+}
+
+function metricsFor(records: FieldCollectionRecord[]): QueueMetrics {
+  return records.reduce<QueueMetrics>((metrics, record) => {
+    if (record.status === 'Queued' || record.status === 'Pending reconciliation') metrics.queued += 1;
+    if (record.status === 'Syncing') metrics.syncing += 1;
+    if (record.status === 'Rejected') metrics.rejected += 1;
+    if (record.status === 'Needs review') metrics.conflict += 1;
+    return metrics;
+  }, { queued: 0, syncing: 0, rejected: 0, conflict: 0 });
 }
 
 export function createPaymentSync(getToken: TokenProvider = async () => undefined, apiBaseUrl = ''): PaymentSync {
