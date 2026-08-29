@@ -1,4 +1,5 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 
 export type FirebaseClientMode = 'live' | 'mock';
 export interface FirebaseClientConfig { apiKey: string; authDomain: string; projectId: string; storageBucket: string; messagingSenderId: string; appId: string; }
@@ -15,3 +16,9 @@ export function getFirebaseClientMode(): FirebaseClientMode { return import.meta
 export function isFirebaseClientConfigured(): boolean { return getFirebaseClientMode() === 'live' && Object.values(config).every(Boolean); }
 export function getFirebaseClient(): FirebaseApp | null { if (!isFirebaseClientConfigured()) return null; return getApps().length ? getApp() : initializeApp(config); }
 export function getFirebaseClientConfig(): Readonly<FirebaseClientConfig> { return config; }
+
+export async function getFirebaseIdToken(): Promise<string | undefined> {
+  const app = getFirebaseClient();
+  const user = app ? getAuth(app).currentUser : null;
+  return user ? user.getIdToken() : undefined;
+}

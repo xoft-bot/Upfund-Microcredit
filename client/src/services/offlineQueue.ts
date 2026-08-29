@@ -1,6 +1,6 @@
 import type { CollectionBatch, CollectionStatus, FieldCollectionRecord, QueueSnapshot, SyncState } from '../types/field-ops.js';
 import { telemetry } from './telemetry.js';
-import { postPayment } from './api.js';
+import { ApiRequestError, postPayment } from './api.js';
 
 const databaseName = 'letsgrow-field-ops';
 const databaseVersion = 1;
@@ -12,12 +12,19 @@ const fallbackKey = 'letsgrow-field-ops-queue';
 type QueueEvent = { id?: number; localId: string; kind: 'recorded' | 'status'; record?: FieldCollectionRecord; status?: CollectionStatus; at: string };
 type SyncResponse = { ok: boolean; data?: { receiptReference?: string }; error?: { code?: string; message?: string } };
 type PaymentSync = (record: FieldCollectionRecord) => Promise<SyncResponse>;
+type TokenProvider = () => Promise<string | undefined>;
 
 function now(): string { return new Date().toISOString(); }
 function isBrowser(): boolean { return typeof window !== 'undefined'; }
 function readFallback(): QueueSnapshot { if (!isBrowser()) return { records: [], batches: [] }; const value = window.localStorage.getItem(fallbackKey); return value ? JSON.parse(value) as QueueSnapshot : { records: [], batches: [] }; }
 function writeFallback(snapshot: QueueSnapshot): void { if (isBrowser()) window.localStorage.setItem(fallbackKey, JSON.stringify(snapshot)); }
-function syncStateFor(status: CollectionStatus): SyncState { return status === 'Queued' || status === 'Pending reconciliation' ? 'queued' : status === 'Syncing' ? 'syncing' : status === 'Posted' ? 'succeeded' : status === 'Rejected' ? 'failed' : 'local'; }
+function syncStateFor(status: CollectionStatus): SyncState {
+  return status === 'Queued' || status === 'Pending reconciliation' ? 'queued'
+    : status === 'Syncing' ? 'syncing'
+      : status === 'Posted' ? 'succeeded'
+        : status === 'Rejected' ? 'failed'
+          : status === 'Needs review' ? 'conflict' : 'local';
+}
 
 export class OfflineQueue {
   private readonly processPayment: PaymentSync;
@@ -72,10 +79,19 @@ export class OfflineQueue {
     await this.enqueueBatch({ ...batch, status, syncState: syncStateFor(status), updatedAt: now(), retryCount: status === 'Queued' ? batch.retryCount : batch.retryCount + 1, lastError });
   }
 
-  async updateStatus(localId: string, status: CollectionStatus, lastError?: string): Promise<void> {
+  async updateStatus(localId: string, status: CollectionStatus, lastError?: string, details: { receiptReference?: string } = {}): Promise<void> {
     const current = (await this.getRecords()).find((record) => record.localId === localId);
     if (!current) throw new Error('QUEUE_RECORD_NOT_FOUND');
-    const updated: FieldCollectionRecord = { ...current, status, syncState: syncStateFor(status), updatedAt: now(), retryCount: status === 'Queued' ? current.retryCount : current.retryCount + 1, lastError };
+    const updated: FieldCollectionRecord = {
+      ...current,
+      ...details,
+      status,
+      syncState: syncStateFor(status),
+      updatedAt: now(),
+      syncedAt: status === 'Posted' ? now() : current.syncedAt,
+      retryCount: status === 'Queued' ? current.retryCount : current.retryCount + 1,
+      lastError,
+    };
     await this.append({ localId, kind: 'status', status, at: updated.updatedAt }, updated);
   }
 
@@ -100,7 +116,7 @@ export class OfflineQueue {
         try {
           const response = await this.processPayment({ ...record, status: 'Syncing', syncState: 'syncing' });
           const syncLatencyMs = Math.round(performance.now() - startedAt);
-          if (response.ok) { await this.updateStatus(record.localId, 'Posted'); telemetry.capture('queue.sync_succeeded', { localId: record.localId, status: 'Posted' }, { correlationId: record.correlationId, syncLatencyMs }); }
+           if (response.ok) { await this.updateStatus(record.localId, 'Posted', undefined, { receiptReference: response.data?.receiptReference }); telemetry.capture('queue.sync_succeeded', { localId: record.localId, status: 'Posted' }, { correlationId: record.correlationId, syncLatencyMs }); }
           else { const status = response.error?.code === 'CONFLICT' ? 'Needs review' : 'Rejected'; await this.updateStatus(record.localId, status, response.error?.message); telemetry.capture('queue.sync_rejected', { localId: record.localId, status, errorCode: response.error?.code }, { correlationId: record.correlationId, syncLatencyMs }); }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'SYNC_FAILED';
@@ -131,9 +147,28 @@ export class OfflineQueue {
   }
 }
 
-export function createPaymentSync(apiBaseUrl = ''): PaymentSync {
+export function createPaymentSync(getToken: TokenProvider = async () => undefined, apiBaseUrl = ''): PaymentSync {
   return async (record) => {
-    try { const result = await postPayment({ loanId: record.loanId, branchId: record.branchId, amount: record.amount, idempotencyKey: record.idempotencyKey, receiptReference: record.receiptReference }, undefined, apiBaseUrl, record.correlationId); return { ok: true, data: { receiptReference: result.receiptReference } }; }
-    catch (error) { const failure = error instanceof Error ? error.message : 'PAYMENT_SYNC_FAILED'; return { ok: false, error: { code: failure, message: failure } }; }
+    const token = await getToken();
+    if (!token) throw new Error('AUTH_TOKEN_UNAVAILABLE');
+    try {
+      const result = await postPayment({
+        loanId: record.loanId,
+        branchId: record.branchId,
+        amount: record.amount,
+        idempotencyKey: record.idempotencyKey,
+        receiptReference: record.receiptReference,
+        localId: record.localId,
+        clientId: record.clientId,
+        deviceId: record.deviceId,
+        paymentMethod: record.paymentMethod,
+        capturedAt: record.capturedAt,
+      }, token, apiBaseUrl, record.correlationId);
+      return { ok: true, data: { receiptReference: result.receiptReference } };
+    } catch (error) {
+      if (!(error instanceof ApiRequestError) || error.status === 401 || error.status >= 500) throw error;
+      const failure = error instanceof Error ? error.message : 'PAYMENT_SYNC_FAILED';
+      return { ok: false, error: { code: error instanceof ApiRequestError ? error.code : failure, message: failure } };
+    }
   };
 }

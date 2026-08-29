@@ -21,7 +21,23 @@ async function loadCandidates(asOf: Date): Promise<Candidate[] | null> {
 }
 
 async function defaultExpectedForBranch(branchId: string, asOf: Date): Promise<number> {
-  return withTransaction(async (client) => { const result = await client.query<{ total: string }>(`SELECT COALESCE(SUM((principal_due - principal_paid) + (charge_due - charge_paid)), 0) AS total FROM repayment_schedules s JOIN loans l ON l.id = s.loan_id WHERE l.branch_id = $1 AND s.due_on <= $2 AND s.status = 'open'`, [branchId, asOf]); return toNumber(result.rows[0].total); });
+  return withTransaction(async (client) => {
+    const result = await client.query<{ total: string }>(
+      `SELECT COALESCE(SUM(
+        (principal_due - principal_paid)
+        + (penalty_due - penalty_paid)
+        + CASE WHEN interest_due > 0 OR interest_paid > 0
+               THEN interest_due - interest_paid
+               ELSE charge_due - charge_paid
+          END
+      ), 0) AS total
+       FROM repayment_schedules s
+       JOIN loans l ON l.id = s.loan_id
+       WHERE l.branch_id = $1 AND s.due_on <= $2 AND s.status = 'open'`,
+      [branchId, asOf],
+    );
+    return toNumber(result.rows[0].total);
+  });
 }
 
 function groupCandidates(candidates: Candidate[]): BatchInput[] { const groups = new Map<string, Candidate[]>(); for (const candidate of candidates) groups.set(candidate.branchId, [...(groups.get(candidate.branchId) ?? []), candidate]); return [...groups.entries()].map(([branchId, rows]) => ({ branchId, paymentIds: rows.map((row) => row.paymentId), expectedAmount: 0, recordedAmount: rows.reduce((sum, row) => sum + row.amount, 0), submittedAmount: rows.reduce((sum, row) => sum + row.amount, 0) })); }

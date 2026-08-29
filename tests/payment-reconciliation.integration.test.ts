@@ -57,6 +57,62 @@ suite('Stage 2 atomic payment and reconciliation', () => {
     } finally { client.release(); }
   });
 
+  it('applies the waterfall, holds overpayment, and links the offline source', async () => {
+    const client = await pool!.connect();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    const scheduleId = randomUUID();
+    const localId = `local-${randomUUID()}`;
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Waterfall Client')`, [clientId, branchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Waterfall Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due, penalty_due, interest_due) VALUES ($1, $2, CURRENT_DATE, 100000, 25000, 5000, 20000)`, [scheduleId, loanId]);
+      await client.query('COMMIT');
+
+      const result = await postManualPayment({
+        actorUserId: userId,
+        loanId,
+        branchId,
+        clientId,
+        amount: 135000,
+        idempotencyKey: `payment-${loanId}`,
+        localId,
+        deviceId: 'device-waterfall',
+        paymentMethod: 'cash',
+        capturedAt: '2026-08-25T00:00:00.000Z',
+        correlationId: randomUUID(),
+      });
+
+      expect(result).toMatchObject({ principalAmount: 100000, penaltyAmount: 5000, interestAmount: 20000, chargeAmount: 25000, overpaymentAmount: 10000 });
+      const ledger = await pool!.query<{ account_code: string; side: string; amount: string }>(
+        `SELECT account_code, side, amount FROM ledger_entries WHERE transaction_id = $1 ORDER BY account_code`,
+        [result.ledgerTransactionId],
+      );
+      expect(ledger.rows).toEqual(expect.arrayContaining([
+        { account_code: 'cash.manual', side: 'debit', amount: '135000' },
+        { account_code: 'loan.principal', side: 'credit', amount: '100000' },
+        { account_code: 'realized.penalty', side: 'credit', amount: '5000' },
+        { account_code: 'realized.interest', side: 'credit', amount: '20000' },
+        { account_code: 'overpayment.holding', side: 'credit', amount: '10000' },
+      ]));
+      const source = await pool!.query<{ payment_id: string; status: string; client_id: string; loan_id: string }>(
+        `SELECT payment_id, status, client_id, loan_id FROM field_collection_records WHERE local_id = $1`,
+        [localId],
+      );
+      expect(source.rows[0]).toEqual({ payment_id: result.paymentId, status: 'pending_reconciliation', client_id: clientId, loan_id: loanId });
+      const holding = await pool!.query<{ amount: string; status: string }>(
+        `SELECT amount, status FROM overpayment_holdings WHERE payment_id = $1`,
+        [result.paymentId],
+      );
+      expect(holding.rows[0]).toEqual({ amount: '10000', status: 'held' });
+    } finally { client.release(); }
+  });
+
   it('rejects reconciliation variance and rolls back the batch', async () => {
     const batch = `batch-${randomUUID()}`;
     await expect(postReconciliationBatch({ actorUserId: userId, actorRole: 'manager', branchId, batchReference: batch, expectedAmount: 100, recordedAmount: 90, submittedAmount: 80, paymentIds: [], policyVersion: 'v1', managerOverride: false, correlationId: randomUUID() })).rejects.toThrow('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');

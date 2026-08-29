@@ -7,6 +7,7 @@ import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
 import type { VarianceBatch } from './components/field/ManagerVarianceDashboard.js';
 import { OfflineQueue, createPaymentSync } from './services/offlineQueue.js';
 import { getHealth } from './services/api.js';
+import { getFirebaseIdToken } from './services/firebase.js';
 import type { FieldCollectionRecord } from './types/field-ops.js';
 
 const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
@@ -15,7 +16,7 @@ const LazyManagerVarianceDashboard = lazy(async () => { const module = await imp
 const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
 
 function App() {
-  const queue = useMemo(() => new OfflineQueue(createPaymentSync()), []);
+  const queue = useMemo(() => new OfflineQueue(createPaymentSync(getFirebaseIdToken)), []);
   const [records, setRecords] = useState<FieldCollectionRecord[]>([]);
   const [lastRecord, setLastRecord] = useState<FieldCollectionRecord>();
   const [backendLive, setBackendLive] = useState(false);
