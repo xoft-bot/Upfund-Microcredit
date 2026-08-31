@@ -1,6 +1,8 @@
 import { buildApp } from './app.js';
 import { runReconciliationCycle } from './jobs/reconciliationCron.js';
+import { validateRuntimeConfig } from './config.js';
 
+validateRuntimeConfig();
 const app = buildApp();
 const port = Number(process.env.PORT ?? 3000);
 

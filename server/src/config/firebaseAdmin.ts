@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import type { TokenVerifier } from '../middleware/auth.js';
+import { isProductionRuntime } from '../config.js';
 
 export type FirebaseMode = 'live' | 'mock';
 export function getFirebaseMode(): FirebaseMode { return process.env.FIREBASE_MODE === 'mock' ? 'mock' : 'live'; }
@@ -16,7 +17,7 @@ function getFirebaseApp(): admin.app.App {
 export function createConfiguredTokenVerifier(): TokenVerifier {
   const mode = getFirebaseMode();
   if (mode === 'mock') {
-    if (process.env.NODE_ENV === 'production') throw new Error('MOCK_FIREBASE_FORBIDDEN_IN_PRODUCTION');
+    if (isProductionRuntime()) throw new Error('MOCK_FIREBASE_FORBIDDEN_IN_PRODUCTION');
     return async (token) => { const [prefix, uid, role, branchId = ''] = token.split(':'); if (prefix !== 'mock' || !uid || !role) throw new Error('INVALID_MOCK_TOKEN'); return { uid, role, branchId } as never; };
   }
   return async (token) => getFirebaseApp().auth().verifyIdToken(token, true);

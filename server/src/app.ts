@@ -18,11 +18,18 @@ import { registerSessionRoutes } from './routes/session.js';
 import { registerReportingRoutes } from './routes/reporting.js';
 import { registerAccountantReportingRoutes } from './routes/accountantReporting.js';
 import { registerCollectorReportingRoutes } from './routes/collectorReporting.js';
+import { isProductionRuntime, validateRuntimeConfig } from './config.js';
+import { registerStaticAssets } from './static-assets.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
-  app.register(cors, { origin: process.env.ALLOWED_ORIGINS?.split(',') ?? false });
-  app.register(helmet);
+  const runtimeConfig = validateRuntimeConfig();
+  app.register(cors, { origin: runtimeConfig.allowedOrigins.length ? runtimeConfig.allowedOrigins : false });
+  app.register(helmet, {
+    crossOriginEmbedderPolicy: false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    hsts: isProductionRuntime() ? { maxAge: 31_536_000, includeSubDomains: true, preload: true } : false,
+  });
   app.register(rateLimit, { max: 60, timeWindow: '1 minute' });
 
   app.addHook('onRequest', async (request, reply) => {
@@ -31,9 +38,14 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
     reply.header('x-system-version', SYSTEM_VERSION);
   });
 
-  app.get('/health', async (request) => {
-    const result = await pool.query('SELECT 1 AS ok');
-    return { ok: true, data: { service: 'upfund-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+  app.get('/health', async (request, reply) => {
+    try {
+      const result = await pool.query('SELECT 1 AS ok');
+      return { ok: true, data: { service: 'upfund-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+    } catch (error) {
+      request.log.error({ err: error, correlationId: request.headers['x-correlation-id'] }, 'health database check failed');
+      return reply.code(503).send({ ok: false, data: { service: 'upfund-microcredit-api', database: 'down' }, error: { code: 'DATABASE_UNAVAILABLE', message: 'Database connectivity check failed' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
+    }
   });
 
   registerPaymentRoutes(app, options.tokenVerifier, options.userResolver);
@@ -46,6 +58,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   registerReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerAccountantReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerCollectorReportingRoutes(app, options.tokenVerifier, options.userResolver);
+  if (isProductionRuntime()) registerStaticAssets(app);
   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],

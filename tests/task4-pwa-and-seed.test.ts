@@ -82,4 +82,18 @@ describe('Task 4 fail-closed seed', () => {
     expect(queries.some((query) => query.sql.includes('INSERT INTO loan_products'))).toBe(true);
     expect(queries.find((query) => query.sql.includes('INSERT INTO users'))?.params).toContain('branch-db-id');
   });
+
+  it('parses approved Firebase UID-based collector assignments', () => {
+    const parsed = parseSeedInput({
+      ...approvedSeed,
+      collectorAssignments: [{
+        officerFirebaseUid: 'firebase-collector-1',
+        clientId: '00000000-0000-4000-8000-000000000002',
+        branchCode: 'KLA-CENTRAL',
+        routeCode: 'KLA-CENTRAL-A',
+        effectiveFrom: '2026-08-01',
+      }],
+    });
+    expect(parsed.collectorAssignments).toEqual([expect.objectContaining({ officerFirebaseUid: 'firebase-collector-1', routeCode: 'KLA-CENTRAL-A', effectiveTo: null })]);
+  });
 });

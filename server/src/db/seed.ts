@@ -20,13 +20,22 @@ export interface SeedUser {
   status?: 'active' | 'disabled';
 }
 export interface SeedLoanProduct { code: string; name: string; currency?: string; active?: boolean; }
+export interface SeedCollectorAssignment {
+  officerFirebaseUid: string;
+  clientId: string;
+  branchCode: string;
+  routeCode: string;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+}
 export interface SeedInput {
   approved: true;
   branches: SeedBranch[];
   users: SeedUser[];
   loanProducts: SeedLoanProduct[];
+  collectorAssignments?: SeedCollectorAssignment[];
 }
-export interface SeedResult { branches: number; users: number; loanProducts: number; }
+export interface SeedResult { branches: number; users: number; loanProducts: number; collectorAssignments: number; }
 export type TransactionRunner = <T>(fn: (client: DbClient) => Promise<T>) => Promise<T>;
 
 function requiredText(value: unknown, label: string): string {
@@ -54,6 +63,12 @@ function listValue(value: unknown, label: string): unknown[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error(`SEED_INVALID_${label.toUpperCase()}_LIST`);
   return value;
+}
+
+function dateValue(value: unknown, label: string): string {
+  const date = requiredText(value, label);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00.000Z`))) throw new Error(`SEED_INVALID_${label.toUpperCase()}_DATE`);
+  return date;
 }
 
 export function parseSeedInput(raw: unknown): SeedInput {
@@ -85,14 +100,28 @@ export function parseSeedInput(raw: unknown): SeedInput {
     if (value.active !== undefined && typeof value.active !== 'boolean') throw new Error('SEED_INVALID_LOAN_PRODUCT_ACTIVE');
     return { code: stableCode(value.code, 'loan_product'), name: requiredText(value.name, 'loan_product_name'), currency, active: value.active === undefined ? true : value.active };
   });
-  if (branches.length + users.length + loanProducts.length === 0) throw new Error('SEED_INPUT_EMPTY');
+  const collectorAssignments = listValue(input.collectorAssignments, 'collector_assignments').map((item) => {
+    const value = objectValue(item, 'collector_assignment');
+    const officerFirebaseUid = requiredText(value.officerFirebaseUid, 'officer_firebase_uid');
+    const clientId = requiredText(value.clientId, 'client_id');
+    if (!uuidPattern.test(clientId)) throw new Error('SEED_INVALID_CLIENT_ID');
+    const effectiveFrom = dateValue(value.effectiveFrom, 'effective_from');
+    const effectiveTo = value.effectiveTo === null || value.effectiveTo === undefined ? null : dateValue(value.effectiveTo, 'effective_to');
+    if (effectiveTo && effectiveTo < effectiveFrom) throw new Error('SEED_INVALID_ASSIGNMENT_DATE_RANGE');
+    return { officerFirebaseUid, clientId, branchCode: stableCode(value.branchCode, 'branch'), routeCode: stableCode(value.routeCode, 'route_code'), effectiveFrom, effectiveTo };
+  });
+  if (branches.length + users.length + loanProducts.length + collectorAssignments.length === 0) throw new Error('SEED_INPUT_EMPTY');
   uniqueCodes(branches, 'branch');
   uniqueCodes(loanProducts, 'loan_product');
   if (new Set(users.map((user) => user.firebaseUid)).size !== users.length) throw new Error('SEED_DUPLICATE_FIREBASE_UID');
   if (new Set(users.map((user) => user.id)).size !== users.length) throw new Error('SEED_DUPLICATE_USER_ID');
   const branchCodes = new Set(branches.map((branch) => branch.code));
   if (users.some((user) => user.branchCode && !branchCodes.has(user.branchCode))) throw new Error('SEED_UNKNOWN_BRANCH');
-  return { approved: true, branches, users, loanProducts };
+  const userUids = new Set(users.map((user) => user.firebaseUid));
+  if (collectorAssignments.some((assignment) => !userUids.has(assignment.officerFirebaseUid))) throw new Error('SEED_UNKNOWN_ASSIGNMENT_USER');
+  if (collectorAssignments.some((assignment) => !branchCodes.has(assignment.branchCode))) throw new Error('SEED_UNKNOWN_BRANCH');
+  if (users.some((user) => collectorAssignments.some((assignment) => assignment.officerFirebaseUid === user.firebaseUid) && !['officer', 'collector'].includes(user.role))) throw new Error('SEED_ASSIGNMENT_USER_ROLE_INVALID');
+  return { approved: true, branches, users, loanProducts, collectorAssignments };
 }
 
 export async function readApprovedSeedInput(filePath = process.env.SEED_INPUT_FILE, inlineJson = process.env.SEED_INPUT_JSON): Promise<SeedInput> {
@@ -147,6 +176,22 @@ export async function seedDatabase(input: SeedInput, transaction: TransactionRun
       );
     }
 
+    for (const assignment of validated.collectorAssignments ?? []) {
+      const officer = await client.query<{ id: string }>(
+        `SELECT id FROM users WHERE firebase_uid = $1 AND status = 'active'`,
+        [assignment.officerFirebaseUid],
+      );
+      if (!officer.rowCount) throw new Error('SEED_ASSIGNMENT_USER_NOT_FOUND');
+      await client.query(
+        `INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code, effective_from, effective_to)
+         VALUES ($1, $2, $3, $4, $5::date, $6::date)
+         ON CONFLICT (officer_id, client_id, route_code, effective_from) DO UPDATE SET
+           branch_id = EXCLUDED.branch_id,
+           effective_to = EXCLUDED.effective_to`,
+        [officer.rows[0].id, assignment.clientId, branchIds.get(assignment.branchCode), assignment.routeCode, assignment.effectiveFrom, assignment.effectiveTo],
+      );
+    }
+
     for (const product of validated.loanProducts) {
       await client.query(
         `INSERT INTO loan_products (code, name, currency, active) VALUES ($1, $2, $3, $4)
@@ -154,7 +199,7 @@ export async function seedDatabase(input: SeedInput, transaction: TransactionRun
         [product.code, product.name, product.currency ?? 'UGX', product.active ?? true],
       );
     }
-    return { branches: validated.branches.length, users: validated.users.length, loanProducts: validated.loanProducts.length };
+    return { branches: validated.branches.length, users: validated.users.length, loanProducts: validated.loanProducts.length, collectorAssignments: validated.collectorAssignments?.length ?? 0 };
   });
 }
 
