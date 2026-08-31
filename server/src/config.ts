@@ -11,6 +11,10 @@ export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boole
   return env.NODE_ENV === 'production' || env.APP_ENV === 'production';
 }
 
+export function isFlutterwaveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.FLUTTERWAVE_ENABLED === 'true';
+}
+
 function required(env: NodeJS.ProcessEnv, key: string, missing: string[]): string {
   const value = env[key]?.trim();
   if (!value) missing.push(key);
@@ -54,9 +58,11 @@ export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Run
   required(env, 'FIREBASE_CLIENT_EMAIL', missing);
   required(env, 'FIREBASE_PRIVATE_KEY', missing);
   const origins = parseProductionOrigins(env.ALLOWED_ORIGINS ?? '', missing);
-  required(env, 'FLUTTERWAVE_SECRET_HASH', missing);
-  const webhookActorId = required(env, 'FLUTTERWAVE_ACTOR_USER_ID', missing);
-  if (webhookActorId && !uuidPattern.test(webhookActorId)) throw new Error('FLUTTERWAVE_ACTOR_USER_ID_INVALID');
+  if (isFlutterwaveEnabled(env)) {
+    required(env, 'FLUTTERWAVE_SECRET_HASH', missing);
+    const webhookActorId = required(env, 'FLUTTERWAVE_ACTOR_USER_ID', missing);
+    if (webhookActorId && !uuidPattern.test(webhookActorId)) throw new Error('FLUTTERWAVE_ACTOR_USER_ID_INVALID');
+  }
   if (env.JWT_AUTH_ENABLED === 'true') required(env, 'JWT_SECRET', missing);
   if (env.RECONCILIATION_SCHEDULER_ENABLED === 'true') {
     const actorId = required(env, 'RECONCILIATION_SCHEDULER_ACTOR_USER_ID', missing);

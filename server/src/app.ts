@@ -18,7 +18,7 @@ import { registerSessionRoutes } from './routes/session.js';
 import { registerReportingRoutes } from './routes/reporting.js';
 import { registerAccountantReportingRoutes } from './routes/accountantReporting.js';
 import { registerCollectorReportingRoutes } from './routes/collectorReporting.js';
-import { isProductionRuntime, validateRuntimeConfig } from './config.js';
+import { isFlutterwaveEnabled, isProductionRuntime, validateRuntimeConfig } from './config.js';
 import { registerStaticAssets } from './static-assets.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
@@ -50,7 +50,10 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
 
   registerPaymentRoutes(app, options.tokenVerifier, options.userResolver);
   registerReconciliationRoutes(app, options.tokenVerifier, options.userResolver);
-  registerWebhookRoutes(app);
+  const flutterwaveEnabled = isFlutterwaveEnabled();
+  if (!flutterwaveEnabled && process.env.NODE_ENV !== 'test') app.log.info('Flutterwave webhook integration disabled');
+  if (flutterwaveEnabled && !process.env.FLUTTERWAVE_SECRET_HASH && !isProductionRuntime()) app.log.warn('Flutterwave webhook is enabled without a secret; using development fallback hash');
+  registerWebhookRoutes(app, { enabled: flutterwaveEnabled });
   registerTelemetryRoutes(app, options.tokenVerifier, options.userResolver);
   registerCollectionQueryRoutes(app, options.tokenVerifier, options.userResolver);
   registerLifecycleRoutes(app, options.tokenVerifier, options.userResolver);

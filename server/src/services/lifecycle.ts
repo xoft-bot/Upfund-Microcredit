@@ -56,6 +56,31 @@ export interface PortalProduct {
   active: boolean;
 }
 
+export interface LoanSchedule {
+  loan: {
+    id: string;
+    clientId: string;
+    branchId: string;
+    principalAmount: number;
+    outstandingPrincipal: number;
+    status: string;
+  };
+  installments: Array<{
+    id: string;
+    dueOn: string;
+    principalDue: number;
+    principalPaid: number;
+    penaltyDue: number;
+    penaltyPaid: number;
+    interestDue: number;
+    interestPaid: number;
+    chargeDue: number;
+    chargePaid: number;
+    remainingAmount: number;
+    status: 'open' | 'paid';
+  }>;
+}
+
 export interface PortalOverview {
   role: Actor['role'];
   metrics: {
@@ -283,6 +308,82 @@ export async function createLoanApplication(actor: Actor, input: { clientId: str
       submittedAt: null,
     };
   });
+}
+
+export async function getLoanSchedule(actor: Actor, loanId: string): Promise<LoanSchedule> {
+  const loanResult = await pool.query<{
+    id: string;
+    application_id: string;
+    client_id: string;
+    branch_id: string;
+    principal_amount: string;
+    outstanding_principal: string;
+    status: LoanStatus;
+  }>(
+    `SELECT id, application_id, client_id, branch_id, principal_amount,
+            outstanding_principal, status
+       FROM loans
+      WHERE id = $1`,
+    [loanId],
+  );
+  if (!loanResult.rowCount) fail('LOAN_NOT_FOUND', 'Loan not found', 404);
+  const loan = loanResult.rows[0];
+  assertClientScope(actor, loan.client_id);
+  assertBranchScope(actor, loan.branch_id);
+  const schedules = await pool.query<{
+    id: string;
+    due_on: Date | string;
+    principal_due: string;
+    principal_paid: string;
+    penalty_due: string;
+    penalty_paid: string;
+    interest_due: string;
+    interest_paid: string;
+    charge_due: string;
+    charge_paid: string;
+    status: 'open' | 'paid';
+  }>(
+    `SELECT id, due_on, principal_due, principal_paid, penalty_due, penalty_paid,
+            interest_due, interest_paid, charge_due, charge_paid, status
+       FROM repayment_schedules
+      WHERE loan_id = $1
+      ORDER BY due_on, id`,
+    [loanId],
+  );
+  return {
+    loan: {
+      id: loan.id,
+      clientId: loan.client_id,
+      branchId: loan.branch_id,
+      principalAmount: toNumber(loan.principal_amount),
+      outstandingPrincipal: toNumber(loan.outstanding_principal),
+      status: loan.status,
+    },
+    installments: schedules.rows.map((row) => {
+      const principalDue = toNumber(row.principal_due);
+      const principalPaid = toNumber(row.principal_paid);
+      const penaltyDue = toNumber(row.penalty_due);
+      const penaltyPaid = toNumber(row.penalty_paid);
+      const interestDue = toNumber(row.interest_due);
+      const interestPaid = toNumber(row.interest_paid);
+      return {
+        id: row.id,
+        dueOn: typeof row.due_on === 'string' ? row.due_on : row.due_on.toISOString().slice(0, 10),
+        principalDue,
+        principalPaid,
+        penaltyDue,
+        penaltyPaid,
+        interestDue,
+        interestPaid,
+        chargeDue: toNumber(row.charge_due),
+        chargePaid: toNumber(row.charge_paid),
+        remainingAmount: Math.max(principalDue - principalPaid, 0)
+          + Math.max(penaltyDue - penaltyPaid, 0)
+          + Math.max(interestDue - interestPaid, 0),
+        status: row.status,
+      };
+    }),
+  };
 }
 
 export async function submitLoanApplication(actor: Actor, applicationId: string): Promise<{ id: string; status: string }> {

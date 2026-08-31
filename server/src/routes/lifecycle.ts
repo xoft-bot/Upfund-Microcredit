@@ -3,7 +3,7 @@ import type { TokenVerifier, UserResolver } from '../middleware/auth.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { requireBranchScope, requireClientScope, requirePermissions, requireRoles } from '../middleware/authorization.js';
 import { SYSTEM_VERSION } from '../../../shared/version.js';
-import { assessApplicationRisk, createClient, createLoanApplication, decideApplication, disburseLoan, getPortalOverview, reviewKyc, submitLoanApplication, transitionLoan } from '../services/lifecycle.js';
+import { assessApplicationRisk, createClient, createLoanApplication, decideApplication, disburseLoan, getLoanSchedule, getPortalOverview, reviewKyc, submitLoanApplication, transitionLoan } from '../services/lifecycle.js';
 
 interface ClientBody { branchId: string; externalRef: string; displayName: string; }
 interface ApplicationBody { clientId: string; productId: string; branchId?: string; requestedAmount: number; }
@@ -15,6 +15,8 @@ interface TransitionBody { status: 'active' | 'overdue' | 'defaulted' | 'written
 
 export function registerLifecycleRoutes(app: FastifyInstance, verifier?: TokenVerifier, resolveUser?: UserResolver): void {
   const auth = authMiddleware(verifier, resolveUser);
+  const applicationBodySchema = { type: 'object', required: ['clientId', 'productId', 'requestedAmount'], additionalProperties: false, properties: { clientId: { type: 'string', minLength: 1 }, productId: { type: 'string', minLength: 1 }, branchId: { type: 'string', minLength: 1 }, requestedAmount: { type: 'integer', minimum: 1 } } } as const;
+  const scheduleParamsSchema = { type: 'object', required: ['id'], additionalProperties: false, properties: { id: { type: 'string', minLength: 1 } } } as const;
   app.get('/api/v1/portal/overview', {
      preHandler: [auth, requirePermissions('portal.manager', 'portal.officer', 'portal.client', 'portal.marketing', 'portal.accountant')],
   }, async (request) => ({ ok: true, data: await getPortalOverview(request.actor!), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
@@ -24,10 +26,31 @@ export function registerLifecycleRoutes(app: FastifyInstance, verifier?: TokenVe
     schema: { body: { type: 'object', required: ['branchId', 'externalRef', 'displayName'], additionalProperties: false, properties: { branchId: { type: 'string', minLength: 1 }, externalRef: { type: 'string', minLength: 1, maxLength: 128 }, displayName: { type: 'string', minLength: 1, maxLength: 160 } } } },
   }, async (request) => ({ ok: true, data: await createClient(request.actor!, request.body), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 
-  app.post<{ Body: ApplicationBody }>('/api/v1/loan-applications', {
+  const createApplication = async (request: { actor?: Parameters<typeof createLoanApplication>[0]; body: ApplicationBody; headers: Record<string, string | string[] | undefined> }) => ({
+    ok: true,
+    data: await createLoanApplication(request.actor!, request.body),
+    correlationId: request.headers['x-correlation-id'],
+    version: SYSTEM_VERSION,
+  });
+  const createApplicationOptions = {
     preHandler: [auth, requirePermissions('applications.create'), requireClientScope((request) => (request.body as ApplicationBody).clientId)],
-    schema: { body: { type: 'object', required: ['clientId', 'productId', 'requestedAmount'], additionalProperties: false, properties: { clientId: { type: 'string', minLength: 1 }, productId: { type: 'string', minLength: 1 }, branchId: { type: 'string', minLength: 1 }, requestedAmount: { type: 'integer', minimum: 1 } } } },
-  }, async (request) => ({ ok: true, data: await createLoanApplication(request.actor!, request.body), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
+    schema: { body: applicationBodySchema },
+  };
+  app.post<{ Body: ApplicationBody }>('/api/v1/loan-applications', createApplicationOptions, createApplication);
+  app.post<{ Body: ApplicationBody }>('/api/loans/apply', createApplicationOptions, createApplication);
+
+  const getSchedule = async (request: { actor?: Parameters<typeof getLoanSchedule>[0]; params: { id: string }; headers: Record<string, string | string[] | undefined> }) => ({
+    ok: true,
+    data: await getLoanSchedule(request.actor!, request.params.id),
+    correlationId: request.headers['x-correlation-id'],
+    version: SYSTEM_VERSION,
+  });
+  const scheduleOptions = {
+    preHandler: [auth, requirePermissions('loans.read')],
+    schema: { params: scheduleParamsSchema },
+  };
+  app.get<{ Params: { id: string } }>('/api/v1/loans/:id/schedule', scheduleOptions, getSchedule);
+  app.get<{ Params: { id: string } }>('/api/loans/:id/schedule', scheduleOptions, getSchedule);
 
   app.post<{ Params: { id: string } }>('/api/v1/loan-applications/:id/submit', {
     preHandler: [auth, requirePermissions('applications.submit')],

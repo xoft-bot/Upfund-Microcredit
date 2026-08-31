@@ -19,6 +19,15 @@ describe('Flutterwave webhook guard', () => {
     expect(missing.statusCode).toBe(401); expect(invalid.statusCode).toBe(401); expect(postPayment).not.toHaveBeenCalled(); await app.close();
   });
 
+  it('does not process the route when the provider integration is disabled', async () => {
+    const postPayment = vi.fn(async () => result); const app = Fastify(); registerWebhookRoutes(app, { enabled: false, postPayment }); await app.ready();
+    const response = await app.inject({ method: 'POST', url: '/api/v1/webhooks/flutterwave', payload });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('FLUTTERWAVE_DISABLED');
+    expect(postPayment).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('replays duplicate tx_ref values through the idempotent payment contract', async () => {
     const postPayment = vi.fn().mockResolvedValueOnce(result).mockResolvedValueOnce({ ...result, created: false }); const app = Fastify(); registerWebhookRoutes(app, { secretHash: 'hash', actorUserId: 'system-user', postPayment }); await app.ready();
     const headers = { 'verif-hash': 'hash', 'x-correlation-id': 'corr-1' }; const first = await app.inject({ method: 'POST', url: '/api/v1/webhooks/flutterwave', headers, payload }); const second = await app.inject({ method: 'POST', url: '/api/v1/webhooks/flutterwave', headers, payload });

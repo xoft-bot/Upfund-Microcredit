@@ -4,11 +4,13 @@ import { normalizeFlutterwaveCharge, verifyFlutterwaveSignature } from '../servi
 import { postManualPayment, type ManualPaymentResult } from '../services/payment-posting.js';
 
 type PaymentPoster = (input: { actorUserId: string; loanId: string; branchId: string; amount: number; idempotencyKey: string; correlationId: string }) => Promise<ManualPaymentResult>;
-interface WebhookOptions { secretHash?: string; actorUserId?: string; postPayment?: PaymentPoster; }
+interface WebhookOptions { enabled?: boolean; secretHash?: string; actorUserId?: string; postPayment?: PaymentPoster; }
 
 export function registerWebhookRoutes(app: FastifyInstance, options: WebhookOptions = {}): void {
+  const enabled = options.enabled ?? true;
   app.post('/api/v1/webhooks/flutterwave', async (request, reply) => {
     const correlationId = String(request.headers['x-correlation-id'] ?? 'webhook');
+    if (!enabled) return reply.code(404).send({ ok: false, error: { code: 'FLUTTERWAVE_DISABLED', message: 'Flutterwave webhook integration is disabled' }, correlationId, version: SYSTEM_VERSION });
     const signature = request.headers['verif-hash'];
     if (!verifyFlutterwaveSignature(signature, options.secretHash)) return reply.code(401).send({ ok: false, error: { code: 'INVALID_WEBHOOK_SIGNATURE', message: 'Webhook signature rejected' }, correlationId, version: SYSTEM_VERSION });
     let event;
