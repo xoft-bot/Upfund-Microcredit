@@ -3,3 +3,4 @@
 - [Preview tooling](preview-tooling.md) — imported Vite/ESLint versions need project-scoped checks and a web-preview-compatible client port.
 - [Reconciliation controls](reconciliation-controls.md) — lock the full automated cycle and allocate surplus only from realized charge components.
 - [Authenticated offline pilot](offline-pilot.md) — Firebase establishes the session; server session data controls role, branch, and financial scope.
+- [Reporting scope separation](reporting-scope-separation.md) — current portfolio risk scope and historical accounting-period scope must remain separate in read models.

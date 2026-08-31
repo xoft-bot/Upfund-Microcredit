@@ -17,10 +17,19 @@ try {
       console.log(`Skipped ${file}`);
       continue;
     }
-    await client.query('BEGIN');
-    await client.query(await readFile(join(directory, file), 'utf8'));
-    await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
-    await client.query('COMMIT');
+    const sql = await readFile(join(directory, file), 'utf8');
+    if (sql.trimStart().startsWith('-- migration: concurrent')) {
+      const statements = sql.split(';').map((statement) => statement.trim()).filter(Boolean);
+      for (const statement of statements) await client.query(statement);
+      await client.query('BEGIN');
+      await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
+      await client.query('COMMIT');
+    } else {
+      await client.query('BEGIN');
+      await client.query(sql);
+      await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
+      await client.query('COMMIT');
+    }
     console.log(`Applied ${file}`);
   }
 } catch (error) {

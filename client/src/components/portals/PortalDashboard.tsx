@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { AuthIdentity } from '../../services/firebase.js';
 import { assessApplicationRisk, createClient, createLoanApplication, decideApplication, disburseLoan, getPortalOverview, reviewApplicationKyc, submitLoanApplication, type PortalApplication, type PortalOverview } from '../../services/api.js';
 import { getFirebaseIdToken } from '../../services/firebase.js';
+import { ManagerAnalyticsDashboard } from './ManagerAnalyticsDashboard.js';
 
 interface PortalDashboardProps { identity: AuthIdentity; }
 
@@ -109,6 +110,7 @@ export function PortalDashboard({ identity }: PortalDashboardProps) {
   return <section className="portal-shell" aria-labelledby="portal-title">
     <div className="portal-hero"><div><p className="eyebrow">{copy.eyebrow}</p><h2 id="portal-title">{copy.title}</h2><p className="lede">{copy.lede}</p></div><span className="role-chip">{titleCase(identity.role)}</span></div>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-success" role="status">{notice}</p>}
+    {isManager && <ManagerAnalyticsDashboard identity={identity} />}
     <div className="portal-metrics"><Metric label="Clients" value={overview.metrics.clients} /><Metric label="Applications" value={overview.metrics.applications} /><Metric label="Active loans" value={overview.metrics.activeLoans} /><Metric label="Outstanding" value={money(overview.metrics.outstandingPrincipal)} /></div>
     {isMarketing ? <div className="portal-grid"><section className="portal-card"><p className="eyebrow">Demand signal</p><h3>{overview.metrics.submittedApplications} applications in review</h3><p className="note">Marketing sees aggregate demand and active product availability only.</p></section><section className="portal-card"><p className="eyebrow">Live products</p><div className="product-list">{overview.products.map((product) => <div className="product-row" key={product.id}><strong>{product.name}</strong><span>{product.code} · {product.currency}</span></div>)}</div></section></div> : <div className="portal-grid">
       {(isOfficer || isClient) && <section className="portal-card"><p className="eyebrow">New application</p><h3>Start a request</h3><form onSubmit={submit} className="portal-form"><label>Loan product<select value={selectedProduct} onChange={(event) => setSelectedProduct(event.target.value)}><option value="">Choose a product</option>{overview.products.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}</select></label>{isOfficer && <label>Client<select value={selectedClient} onChange={(event) => setSelectedClient(event.target.value)}><option value="">Choose a client</option>{overview.clients.map((client) => <option value={client.id} key={client.id}>{client.displayName} · {client.externalRef}</option>)}</select></label>}<label>Requested amount (UGX)<input value={requestedAmount} onChange={(event) => setRequestedAmount(event.target.value)} inputMode="numeric" min="1" step="1" required /></label><button className="primary-button" type="submit" disabled={busy}>Save draft</button></form></section>}
