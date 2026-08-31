@@ -250,3 +250,22 @@ There are no real portal shells or navigation paths for the brief's administrato
 **Decision: Do not certify for production or claim full-system completion.**
 
 The existing backend primitives are a reasonable foundation for continued implementation, and several isolated unit/contract tests pass. The current application, however, is not an end-to-end microcredit platform and its visible offline collection workflow is not authenticated or connected to authoritative server data. The database must be migrated and the P0 findings must be resolved before financial behavior can be treated as operationally trustworthy.
+
+## Current milestone update — 2026-08-31
+
+The original audit predates the completed Tasks 1–5 and Financial Controls Hardening work. The active workspace was rechecked while implementing the Authenticated Offline Field Sync & PWA Pilot Path:
+
+| Finding | Current state |
+|---|---|
+| AUD-001 | Resolved in the active development environment; all 24 required tables are migrated and verified. |
+| AUD-002 | Resolved in the client sync path; queued payment requests obtain a live Firebase ID token and remain queued when authentication is unavailable. |
+| AUD-003 | Resolved for the pilot shell; signed-out, pending-account, and authenticated states are explicit, and collection data loads from protected server queries. |
+| AUD-004 | Resolved at the server boundary; Firebase UID resolution, active-user checks, database roles, permissions, and branch scope are authoritative. |
+| AUD-005 | Resolved with component-level and database-backed regression coverage for principal and overpayment exclusion. |
+| AUD-006 | Resolved; manager decision reasons and terminal reconciliation states are persisted and idempotent. |
+| AUD-007 | Resolved for the configured in-process scheduler path; the full reconciliation cycle is protected by PostgreSQL advisory locking. |
+| AUD-010 | Resolved for the installable shell path; the manifest, icon, service worker cache lifecycle, offline navigation fallback, and static shell tests are present. |
+
+Current verification: 59 tests pass, lint passes, TypeScript typecheck passes, production build passes, the active application workflow is running, `/health` reports the database as up, and unauthenticated session access returns `401`.
+
+This update does not certify the product for production. A real Firebase project/session, pilot users, branch data, and an operational deployment still need to be exercised before the field pilot is accepted. Reporting/read-model dashboards, broader loan operations, capital workflows, and external integrations remain future milestones.

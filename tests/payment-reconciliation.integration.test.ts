@@ -105,6 +105,19 @@ suite('Stage 2 atomic payment and reconciliation', () => {
         [localId],
       );
       expect(source.rows[0]).toEqual({ payment_id: result.paymentId, status: 'pending_reconciliation', client_id: clientId, loan_id: loanId });
+      await expect(postManualPayment({
+        actorUserId: userId,
+        loanId,
+        branchId,
+        clientId,
+        amount: 136000,
+        idempotencyKey: `payment-${loanId}`,
+        localId,
+        deviceId: 'device-waterfall',
+        paymentMethod: 'cash',
+        capturedAt: '2026-08-25T00:00:00.000Z',
+        correlationId: randomUUID(),
+      })).rejects.toThrow('FIELD_COLLECTION_CONFLICT');
       const holding = await pool!.query<{ amount: string; status: string }>(
         `SELECT amount, status FROM overpayment_holdings WHERE payment_id = $1`,
         [result.paymentId],

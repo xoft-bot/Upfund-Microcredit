@@ -39,9 +39,16 @@ export function registerPaymentRoutes(app: FastifyInstance, verifier?: TokenVeri
         },
       },
     },
-  }, async (request) => {
+  }, async (request, reply) => {
     const actor = request.actor!;
-    const result = await postManualPayment({ ...request.body, actorUserId: actor.userId, correlationId: String(request.headers['x-correlation-id']) });
-    return { ok: true, data: result, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+    try {
+      const result = await postManualPayment({ ...request.body, actorUserId: actor.userId, correlationId: String(request.headers['x-correlation-id']) });
+      return { ok: true, data: result, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'FIELD_COLLECTION_CONFLICT') {
+        return reply.code(409).send({ ok: false, error: { code: 'CONFLICT', message: 'This offline collection conflicts with an existing server record' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
+      }
+      throw error;
+    }
   });
 }

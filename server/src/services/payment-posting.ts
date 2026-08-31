@@ -57,15 +57,54 @@ async function persistFieldCollectionSource(
 ): Promise<void> {
   if (!input.localId) return;
   const paymentMethod = input.paymentMethod ?? 'manual';
+  const existing = await client.query<{
+    id: string;
+    payment_id: string | null;
+    branch_id: string;
+    idempotency_key: string;
+    amount: number;
+    device_id: string;
+    captured_at: Date;
+    client_id: string | null;
+    loan_id: string | null;
+    collector_id: string | null;
+    payment_method: string | null;
+  }>(
+    `SELECT id, payment_id, branch_id, idempotency_key, amount, device_id, captured_at,
+            client_id, loan_id, collector_id, payment_method
+       FROM field_collection_records
+      WHERE local_id = $1 OR idempotency_key = $2
+      FOR UPDATE`,
+    [input.localId, input.idempotencyKey],
+  );
+  if (existing.rowCount) {
+    const source = existing.rows[0];
+    const capturedAt = input.capturedAt ? normalizedCapturedAt(input.capturedAt) : null;
+    const sameCapture = source.payment_id === paymentId
+      && source.branch_id === input.branchId
+      && source.idempotency_key === input.idempotencyKey
+      && Number(source.amount) === input.amount
+      && source.device_id === (input.deviceId ?? 'unknown')
+      && (!capturedAt || source.captured_at.toISOString() === capturedAt)
+      && source.client_id === (input.clientId ?? null)
+      && source.loan_id === input.loanId
+      && source.collector_id === input.actorUserId
+      && source.payment_method === paymentMethod;
+    if (!sameCapture) throw new Error('FIELD_COLLECTION_CONFLICT');
+    await client.query(
+      `UPDATE field_collection_records
+          SET synced_at = COALESCE(synced_at, now())
+        WHERE id = $1`,
+      [source.id],
+    );
+    return;
+  }
   await client.query(
     `INSERT INTO field_collection_records
       (branch_id, payment_id, local_id, idempotency_key, amount, status, device_id,
        captured_at, client_id, loan_id, collector_id, payment_method, correlation_id, synced_at)
      VALUES ($1, $2, $3, $4, $5, 'pending_reconciliation', $6, $7, $8, $9, $10, $11, $12, now())
-     ON CONFLICT (local_id) DO UPDATE
-       SET payment_id = COALESCE(field_collection_records.payment_id, EXCLUDED.payment_id),
-           status = 'pending_reconciliation',
-           synced_at = EXCLUDED.synced_at`,
+      `,
     [
       input.branchId,
       paymentId,

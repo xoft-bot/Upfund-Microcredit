@@ -2,3 +2,4 @@
 - [Database verification](database-verification.md) — verify the active development schema instead of relying on imported audit or handoff claims.
 - [Preview tooling](preview-tooling.md) — imported Vite/ESLint versions need project-scoped checks and a web-preview-compatible client port.
 - [Reconciliation controls](reconciliation-controls.md) — lock the full automated cycle and allocate surplus only from realized charge components.
+- [Authenticated offline pilot](offline-pilot.md) — Firebase establishes the session; server session data controls role, branch, and financial scope.

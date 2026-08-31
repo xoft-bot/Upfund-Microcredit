@@ -4,6 +4,7 @@ import { pool } from '../server/src/db.js';
 import { authMiddleware, resolveDatabaseUser, type TokenVerifier, type UserResolver } from '../server/src/middleware/auth.js';
 import { registerCollectionQueryRoutes } from '../server/src/routes/collectionQueries.js';
 import { registerReconciliationRoutes } from '../server/src/routes/reconciliations.js';
+import { registerSessionRoutes } from '../server/src/routes/session.js';
 
 const managerUser = { dbUserId: '00000000-0000-4000-8000-000000000001', firebaseUid: 'manager-firebase', role: 'manager' as const, branchId: '00000000-0000-4000-8000-000000000002' };
 const collectorUser = { dbUserId: '00000000-0000-4000-8000-000000000003', firebaseUid: 'collector-firebase', role: 'collector' as const, branchId: managerUser.branchId };
@@ -41,6 +42,16 @@ describe('Batch 1 authoritative authentication', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().user).toMatchObject({ ...managerUser, db_user_id: managerUser.dbUserId, firebase_uid: managerUser.firebaseUid, branch_id: managerUser.branchId });
     expect(response.json().actor).toMatchObject({ userId: managerUser.dbUserId, dbUserId: managerUser.dbUserId, role: 'manager', branchId: managerUser.branchId });
+    await app.close();
+  });
+
+  it('returns the database-authoritative session profile', async () => {
+    const app = Fastify();
+    registerSessionRoutes(app, verifier, async () => managerUser);
+    await app.ready();
+    const response = await app.inject({ method: 'GET', url: '/api/v1/session', headers: { authorization: 'Bearer valid' } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({ userId: managerUser.dbUserId, firebaseUid: managerUser.firebaseUid, role: 'manager', branchId: managerUser.branchId, permissions: [] });
     await app.close();
   });
 });
