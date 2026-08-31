@@ -3,12 +3,14 @@ import type { AuthIdentity } from '../../services/firebase.js';
 import { assessApplicationRisk, createClient, createLoanApplication, decideApplication, disburseLoan, getPortalOverview, reviewApplicationKyc, submitLoanApplication, type PortalApplication, type PortalOverview } from '../../services/api.js';
 import { getFirebaseIdToken } from '../../services/firebase.js';
 import { ManagerAnalyticsDashboard } from './ManagerAnalyticsDashboard.js';
+import { AccountantAuditDashboard } from './AccountantAuditDashboard.js';
 
 interface PortalDashboardProps { identity: AuthIdentity; }
 
 const portalCopy = {
   manager: { eyebrow: 'Manager workspace', title: 'Portfolio control room', lede: 'Move applications through review, approval, and disbursement with a clear audit trail.' },
   admin: { eyebrow: 'Administrator workspace', title: 'Portfolio control room', lede: 'Oversee applications and loan performance across the microcredit operation.' },
+  accountant: { eyebrow: 'Accountant workspace', title: 'Accounting & audit', lede: 'Trace posted financial activity, balance the books, and review reconciliation decisions.' },
   officer: { eyebrow: 'Loan officer workspace', title: 'Client pipeline', lede: 'Build trusted client records and move applications forward from one branch-aware workspace.' },
   client: { eyebrow: 'Client workspace', title: 'Your borrowing journey', lede: 'Track applications and active loans, then start the next request when you are ready.' },
   marketing: { eyebrow: 'Marketing workspace', title: 'Growth overview', lede: 'Understand product reach and demand without exposing sensitive client details.' },
@@ -45,6 +47,7 @@ export function PortalDashboard({ identity }: PortalDashboardProps) {
   const isOfficer = identity.role === 'officer';
   const isClient = identity.role === 'client';
   const isMarketing = identity.role === 'marketing';
+  const isAccountant = identity.role === 'accountant';
 
   const load = async () => {
     const token = await getFirebaseIdToken();
@@ -111,6 +114,7 @@ export function PortalDashboard({ identity }: PortalDashboardProps) {
     <div className="portal-hero"><div><p className="eyebrow">{copy.eyebrow}</p><h2 id="portal-title">{copy.title}</h2><p className="lede">{copy.lede}</p></div><span className="role-chip">{titleCase(identity.role)}</span></div>
     {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-success" role="status">{notice}</p>}
     {isManager && <ManagerAnalyticsDashboard identity={identity} />}
+    {isAccountant && <AccountantAuditDashboard identity={identity} />}
     <div className="portal-metrics"><Metric label="Clients" value={overview.metrics.clients} /><Metric label="Applications" value={overview.metrics.applications} /><Metric label="Active loans" value={overview.metrics.activeLoans} /><Metric label="Outstanding" value={money(overview.metrics.outstandingPrincipal)} /></div>
     {isMarketing ? <div className="portal-grid"><section className="portal-card"><p className="eyebrow">Demand signal</p><h3>{overview.metrics.submittedApplications} applications in review</h3><p className="note">Marketing sees aggregate demand and active product availability only.</p></section><section className="portal-card"><p className="eyebrow">Live products</p><div className="product-list">{overview.products.map((product) => <div className="product-row" key={product.id}><strong>{product.name}</strong><span>{product.code} · {product.currency}</span></div>)}</div></section></div> : <div className="portal-grid">
       {(isOfficer || isClient) && <section className="portal-card"><p className="eyebrow">New application</p><h3>Start a request</h3><form onSubmit={submit} className="portal-form"><label>Loan product<select value={selectedProduct} onChange={(event) => setSelectedProduct(event.target.value)}><option value="">Choose a product</option>{overview.products.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}</select></label>{isOfficer && <label>Client<select value={selectedClient} onChange={(event) => setSelectedClient(event.target.value)}><option value="">Choose a client</option>{overview.clients.map((client) => <option value={client.id} key={client.id}>{client.displayName} · {client.externalRef}</option>)}</select></label>}<label>Requested amount (UGX)<input value={requestedAmount} onChange={(event) => setRequestedAmount(event.target.value)} inputMode="numeric" min="1" step="1" required /></label><button className="primary-button" type="submit" disabled={busy}>Save draft</button></form></section>}

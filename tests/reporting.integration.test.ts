@@ -3,6 +3,7 @@ import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { buildApp } from '../server/src/app.js';
 import { getManagerReportingSnapshot } from '../server/src/services/reporting.js';
+import { getAccountantReportingSnapshot } from '../server/src/services/accountant-reporting.js';
 import { postManualPayment } from '../server/src/services/payment-posting.js';
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -131,6 +132,23 @@ suite('Manager reporting read models', () => {
     ]));
     expect(snapshot.openReconciliations).toMatchObject({ count: 1, recordedAmount: 500, variance: -10 });
     expect(snapshot.branchPerformance).toEqual([expect.objectContaining({ branchId, outstandingPrincipal: 9_000, pendingCollections: 300, openReconciliations: 1 })]);
+
+    const accountantSnapshot = await getAccountantReportingSnapshot({ branchId, asOf: today, from, to: today });
+    expect(accountantSnapshot.journalEntries.length).toBe(2);
+    expect(accountantSnapshot.journalEntries.every((entry) => entry.balanced && entry.totalDebits === entry.totalCredits)).toBe(true);
+    expect(accountantSnapshot.trialBalance.reduce((sum, row) => sum + row.debitTotal, 0)).toBe(accountantSnapshot.trialBalance.reduce((sum, row) => sum + row.creditTotal, 0));
+    expect(accountantSnapshot.waterfallTotals).toMatchObject({
+      postedAmount: 1_200,
+      principalRecovery: 1_000,
+      realizedInterest: 100,
+      realizedPenalty: 50,
+      overpaymentLiability: 50,
+      allocationDelta: 0,
+    });
+    expect(accountantSnapshot.waterfallAllocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ amount: 200, principalRecovery: 200, realizedInterest: 0, realizedPenalty: 0, overpaymentLiability: 0, allocationDelta: 0 }),
+      expect.objectContaining({ amount: 1_000, principalRecovery: 800, realizedInterest: 100, realizedPenalty: 50, overpaymentLiability: 50, allocationDelta: 0 }),
+    ]));
   });
 
   it('enforces the protected manager endpoint and branch scope', async () => {
@@ -143,6 +161,17 @@ suite('Manager reporting read models', () => {
     const response = await app.inject({ method: 'GET', url: `/api/v1/reports/manager?branchId=${branchId}&asOf=${today}&from=${from}&to=${today}`, headers: { authorization: 'Bearer reporting-test-token' } });
     expect(response.statusCode).toBe(200);
     expect(response.json().data.filters.branchId).toBe(branchId);
+    const managerDenied = await app.inject({ method: 'GET', url: `/api/v1/reports/accountant?branchId=${branchId}&asOf=${today}&from=${from}&to=${today}`, headers: { authorization: 'Bearer reporting-test-token' } });
+    expect(managerDenied.statusCode).toBe(403);
     await app.close();
+
+    const accountantApp = buildApp({
+      tokenVerifier: async () => ({ uid: firebaseUid } as never),
+      userResolver: async () => ({ dbUserId: userId, firebaseUid, role: 'accountant', branchId, clientId: null, permissions: [] }),
+    });
+    const accountantResponse = await accountantApp.inject({ method: 'GET', url: `/api/v1/reports/accountant?branchId=${branchId}&asOf=${today}&from=${from}&to=${today}`, headers: { authorization: 'Bearer accountant-test-token' } });
+    expect(accountantResponse.statusCode).toBe(200);
+    expect(accountantResponse.json().data.filters.branchId).toBe(branchId);
+    await accountantApp.close();
   });
 });

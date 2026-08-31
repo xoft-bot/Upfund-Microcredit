@@ -16,7 +16,7 @@ interface TransitionBody { status: 'active' | 'overdue' | 'defaulted' | 'written
 export function registerLifecycleRoutes(app: FastifyInstance, verifier?: TokenVerifier, resolveUser?: UserResolver): void {
   const auth = authMiddleware(verifier, resolveUser);
   app.get('/api/v1/portal/overview', {
-    preHandler: [auth, requirePermissions('portal.manager', 'portal.officer', 'portal.client', 'portal.marketing')],
+     preHandler: [auth, requirePermissions('portal.manager', 'portal.officer', 'portal.client', 'portal.marketing', 'portal.accountant')],
   }, async (request) => ({ ok: true, data: await getPortalOverview(request.actor!), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 
   app.post<{ Body: ClientBody }>('/api/v1/clients', {

@@ -96,3 +96,89 @@ export interface ManagerReportingSnapshot {
     batches: OpenReconciliation[];
   };
 }
+
+export interface AccountantJournalLine {
+  id: string;
+  accountCode: string;
+  side: 'debit' | 'credit';
+  amount: number;
+  currency: string;
+}
+
+export interface AccountantJournalEntry {
+  transactionId: string;
+  sourceType: string;
+  sourceId: string;
+  branchId: string | null;
+  branchName: string | null;
+  postedAt: string;
+  postedBy: string;
+  postedByName: string | null;
+  description: string;
+  totalDebits: number;
+  totalCredits: number;
+  balanced: boolean;
+  lines: AccountantJournalLine[];
+}
+
+export interface AccountantWaterfallAllocation {
+  paymentId: string;
+  loanId: string;
+  branchId: string;
+  branchName: string;
+  postedAt: string;
+  amount: number;
+  principalRecovery: number;
+  realizedInterest: number;
+  realizedPenalty: number;
+  overpaymentLiability: number;
+  allocationDelta: number;
+}
+
+export interface AccountantWaterfallTotals {
+  postedAmount: number;
+  principalRecovery: number;
+  realizedInterest: number;
+  realizedPenalty: number;
+  overpaymentLiability: number;
+  allocationDelta: number;
+}
+
+export interface AccountantTrialBalanceLine {
+  accountCode: string;
+  debitTotal: number;
+  creditTotal: number;
+  netBalance: number;
+}
+
+export interface AccountantReconciliationAudit {
+  reconciliationId: string;
+  batchReference: string;
+  branchId: string;
+  branchName: string;
+  collectionDate: string;
+  expectedAmount: number;
+  recordedAmount: number;
+  submittedAmount: number;
+  variance: number;
+  status: string;
+  submittedBy: string;
+  submittedByName: string | null;
+  reviewedBy: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  decisionReason: string | null;
+  auditAction: string | null;
+  auditAt: string | null;
+}
+
+export interface AccountantReportingSnapshot {
+  filters: ReportingFilters;
+  branches: Array<{ branchId: string; branchName: string }>;
+  journalEntries: AccountantJournalEntry[];
+  waterfallAllocations: AccountantWaterfallAllocation[];
+  waterfallTotals: AccountantWaterfallTotals;
+  trialBalance: AccountantTrialBalanceLine[];
+  reconciliationOverrides: AccountantReconciliationAudit[];
+  varianceLogs: AccountantReconciliationAudit[];
+}
