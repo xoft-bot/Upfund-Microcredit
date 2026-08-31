@@ -54,3 +54,16 @@ externalPort = 8081
 deploymentTarget = "autoscale"
 run = ["npm", "run", "start"]
 build = ["npm", "run", "build"]
+
+[userenv]
+
+[userenv.shared]
+FIREBASE_MODE = "live"
+FIREBASE_PROJECT_ID = "upfund-microcredit"
+VITE_FIREBASE_API_KEY = "AIzaSyDksXzDvv76eqrhqF88JqkQqDqBP2T30xw"
+VITE_FIREBASE_APP_ID = "1:921982279239:web:b62757657e9eebc969db62"
+VITE_FIREBASE_AUTH_DOMAIN = "upfund-microcredit.firebaseapp.com"
+VITE_FIREBASE_MESSAGING_SENDER_ID = "921982279239"
+VITE_FIREBASE_MODE = "live"
+VITE_FIREBASE_PROJECT_ID = "upfund-microcredit"
+VITE_FIREBASE_STORAGE_BUCKET = "upfund-microcredit.firebasestorage.app"
