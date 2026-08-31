@@ -7,6 +7,7 @@ export interface RuntimeConfig {
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const DEFAULT_SERVER_PORT = 10_000;
+export const DEFAULT_PRODUCTION_CORS_ORIGINS = ['https://upfund-microcredit.web.app', 'https://upfund-microcredit.firebaseapp.com'];
 
 export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV?.trim() === 'production' || env.APP_ENV?.trim() === 'production';
@@ -38,21 +39,23 @@ export function getServerPort(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(configured) && configured > 0 && configured <= 65_535 ? configured : DEFAULT_SERVER_PORT;
 }
 
-function parseProductionOrigins(raw: string, missing: string[]): string[] {
-  const origins = raw.split(',').map((origin) => origin.trim()).filter(Boolean);
-  if (origins.length === 0) {
-    missing.push('CORS_ORIGINS');
-    return [];
-  }
-  for (const origin of origins) {
-    if (origin === '*') throw new Error('PRODUCTION_CORS_WILDCARD_FORBIDDEN');
-    let parsed: URL;
-    try { parsed = new URL(origin); } catch { throw new Error('PRODUCTION_CORS_ORIGIN_INVALID'); }
-    if (parsed.protocol !== 'https:' || parsed.origin !== origin || parsed.pathname !== '/' || parsed.search || parsed.hash) {
-      throw new Error('PRODUCTION_CORS_ORIGIN_MUST_BE_HTTPS_ORIGIN');
-    }
-  }
-  return origins;
+function parseProductionOrigins(raw: string): string[] {
+  const origins = raw
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .map((origin) => {
+      if (!origin || origin === '*') return undefined;
+      try {
+        const parsed = new URL(origin);
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin || parsed.pathname !== '/' || parsed.search || parsed.hash) return undefined;
+        return parsed.origin;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((origin): origin is string => Boolean(origin));
+  const uniqueOrigins = [...new Set(origins)];
+  return uniqueOrigins.length > 0 ? uniqueOrigins : [...DEFAULT_PRODUCTION_CORS_ORIGINS];
 }
 
 export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -74,7 +77,7 @@ export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Run
   required(env, 'FIREBASE_PROJECT_ID', missing);
   required(env, 'FIREBASE_CLIENT_EMAIL', missing);
   required(env, 'FIREBASE_PRIVATE_KEY', missing);
-  const origins = parseProductionOrigins(env.CORS_ORIGINS ?? '', missing);
+  const origins = parseProductionOrigins(env.CORS_ORIGINS ?? '');
   if (env.JWT_AUTH_ENABLED === 'true') required(env, 'JWT_SECRET', missing);
   if (env.RECONCILIATION_SCHEDULER_ENABLED === 'true') {
     const actorId = required(env, 'RECONCILIATION_SCHEDULER_ACTOR_USER_ID', missing);

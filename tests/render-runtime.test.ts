@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiUrl } from '../client/src/services/api.js';
 import { buildApp } from '../server/src/app.js';
-import { getDatabaseConnectionString, getServerPort, DEFAULT_SERVER_PORT, validateRuntimeConfig } from '../server/src/config.js';
+import { getDatabaseConnectionString, getServerPort, DEFAULT_PRODUCTION_CORS_ORIGINS, DEFAULT_SERVER_PORT, validateRuntimeConfig } from '../server/src/config.js';
 import { pool } from '../server/src/db.js';
 
 afterEach(() => vi.restoreAllMocks());
@@ -21,8 +21,8 @@ describe('Render runtime boundary', () => {
     expect(validateRuntimeConfig({ NODE_ENV: 'development', PGURI: 'postgresql://supabase.example.test/db' })).toMatchObject({ isProduction: false });
   });
 
-  it('requires exact production CORS origins', () => {
-    expect(() => validateRuntimeConfig({
+  it('uses production CORS defaults when Render omits the variable', () => {
+    expect(validateRuntimeConfig({
       NODE_ENV: 'production',
       APP_ENV: 'production',
       DATABASE_URL: 'postgresql://db.example.test/app',
@@ -30,8 +30,11 @@ describe('Render runtime boundary', () => {
       FIREBASE_PROJECT_ID: 'project',
       FIREBASE_CLIENT_EMAIL: 'admin@example.test',
       FIREBASE_PRIVATE_KEY: 'key',
-    })).toThrow('PRODUCTION_CONFIG_MISSING:CORS_ORIGINS');
-    expect(() => validateRuntimeConfig({
+    }).allowedOrigins).toEqual(DEFAULT_PRODUCTION_CORS_ORIGINS);
+  });
+
+  it('accepts valid HTTP and HTTPS origins after sanitization', () => {
+    expect(validateRuntimeConfig({
       NODE_ENV: 'production',
       APP_ENV: 'production',
       DATABASE_URL: 'postgresql://db.example.test/app',
@@ -39,8 +42,8 @@ describe('Render runtime boundary', () => {
       FIREBASE_PROJECT_ID: 'project',
       FIREBASE_CLIENT_EMAIL: 'admin@example.test',
       FIREBASE_PRIVATE_KEY: 'key',
-      CORS_ORIGINS: 'http://frontend.example.test',
-    })).toThrow('PRODUCTION_CORS_ORIGIN_MUST_BE_HTTPS_ORIGIN');
+      CORS_ORIGINS: 'http://frontend.example.test/, https://admin.example.test///',
+    }).allowedOrigins).toEqual(['http://frontend.example.test', 'https://admin.example.test']);
   });
 
   it('uses VITE_API_BASE_URL for absolute API calls and relative paths by default', () => {

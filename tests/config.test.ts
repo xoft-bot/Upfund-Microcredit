@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getFirebaseAuthMode, getFirebasePrivateKey, validateRuntimeConfig } from '../server/src/config.js';
+import { DEFAULT_PRODUCTION_CORS_ORIGINS, getFirebaseAuthMode, getFirebasePrivateKey, validateRuntimeConfig } from '../server/src/config.js';
 
 const productionEnv = {
   NODE_ENV: 'production',
@@ -17,8 +17,8 @@ describe('production runtime guardrails', () => {
     expect(() => validateRuntimeConfig({ NODE_ENV: 'production', APP_ENV: 'production' })).toThrow('PRODUCTION_FIREBASE_LIVE_REQUIRED');
   });
 
-  it('accepts live Firebase, database, and HTTPS CORS configuration', () => {
-    expect(validateRuntimeConfig(productionEnv)).toMatchObject({ isProduction: true, allowedOrigins: ['https://pilot.example.com', 'https://admin.example.com'] });
+  it('accepts live Firebase and normalizes production CORS origins', () => {
+    expect(validateRuntimeConfig({ ...productionEnv, CORS_ORIGINS: ' https://pilot.example.com///, http://admin.example.com/ ' })).toMatchObject({ isProduction: true, allowedOrigins: ['https://pilot.example.com', 'http://admin.example.com'] });
   });
 
   it('accepts the canonical auth mode with surrounding whitespace', () => {
@@ -31,8 +31,17 @@ describe('production runtime guardrails', () => {
     expect(getFirebasePrivateKey({ FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----' })).toBe('-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----');
   });
 
-  it('rejects wildcard production CORS and only requires JWT_SECRET for JWT mode', () => {
-    expect(() => validateRuntimeConfig({ ...productionEnv, CORS_ORIGINS: '*' })).toThrow('PRODUCTION_CORS_WILDCARD_FORBIDDEN');
+  it('uses finite defaults for blank, wildcard, or unusable CORS input', () => {
+    expect(validateRuntimeConfig({ ...productionEnv, CORS_ORIGINS: '' }).allowedOrigins).toEqual(DEFAULT_PRODUCTION_CORS_ORIGINS);
+    expect(validateRuntimeConfig({ ...productionEnv, CORS_ORIGINS: '  *  ' }).allowedOrigins).toEqual(DEFAULT_PRODUCTION_CORS_ORIGINS);
+    expect(validateRuntimeConfig({ ...productionEnv, CORS_ORIGINS: 'not-a-url, *' }).allowedOrigins).toEqual(DEFAULT_PRODUCTION_CORS_ORIGINS);
+  });
+
+  it('keeps valid origins from a mixed CORS list', () => {
+    expect(validateRuntimeConfig({ ...productionEnv, CORS_ORIGINS: '*, https://pilot.example.com/, invalid-origin' }).allowedOrigins).toEqual(['https://pilot.example.com']);
+  });
+
+  it('only requires JWT_SECRET for JWT mode', () => {
     expect(() => validateRuntimeConfig({ ...productionEnv, JWT_AUTH_ENABLED: 'true' })).toThrow('PRODUCTION_CONFIG_MISSING:JWT_SECRET');
     expect(validateRuntimeConfig({ ...productionEnv, JWT_AUTH_ENABLED: 'true', JWT_SECRET: 'configured' }).isProduction).toBe(true);
   });

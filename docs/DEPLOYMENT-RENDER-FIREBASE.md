@@ -57,13 +57,14 @@ Set these as Render environment variables or secret values:
 | `FIREBASE_PROJECT_ID` | Firebase project ID |
 | `FIREBASE_CLIENT_EMAIL` | Firebase Admin service-account email |
 | `FIREBASE_PRIVATE_KEY` | Firebase Admin private key |
-| `CORS_ORIGINS` | Exact HTTPS Firebase Hosting origins, comma-separated |
+| `CORS_ORIGINS` | Optional comma-separated HTTP/HTTPS origins; blank or `*` uses Firebase Hosting defaults |
 | `ADMIN_FIREBASE_UID` | Optional real Firebase Auth UID for initial admin mapping |
 
 `DATABASE_URL` takes precedence when both database variables are present.
-Production rejects wildcard, non-HTTPS, path-bearing, query-bearing, or
-fragment-bearing CORS origins. Keep `FIREBASE_PRIVATE_KEY` and database
-credentials server-side.
+Production trims CORS values, removes trailing slashes, accepts valid HTTP/HTTPS
+origins, ignores wildcard or invalid list entries, and falls back to the
+Firebase Hosting defaults when no usable origin remains. Keep
+`FIREBASE_PRIVATE_KEY` and database credentials server-side.
 
 Run the approved seed against the Render/Supabase environment only when the
 reviewed seed JSON is available:
