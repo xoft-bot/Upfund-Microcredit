@@ -1,0 +1,3 @@
+BEGIN;
+ALTER TYPE pool_type ADD VALUE IF NOT EXISTS 'collection';
+COMMIT;

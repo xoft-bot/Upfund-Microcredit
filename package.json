@@ -1,19 +1,58 @@
 {
-  "name": "workspace",
-  "version": "0.0.0",
-  "license": "MIT",
-  "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
-    "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
-  },
+  "name": "letsgrow-microcredit",
+  "version": "1.0.01",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0 <22.0.0"
+  },
+  "packageManager": "pnpm@10.26.1",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "PORT=${PORT:-3000} tsx server/src/index.ts",
+    "dev:client": "vite --config client/vite.config.ts",
+    "start": "NODE_ENV=production node dist/server/server/src/index.js",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build": "tsc -p tsconfig.json && npm run build:server && vite build --config client/vite.config.ts",
+    "lint": "eslint client/src server/src shared tests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "tsx server/src/db/migrate.ts",
+    "db:check": "tsx server/src/db/check-schema.ts",
+    "db:seed": "tsx server/src/db/seed.ts",
+    "db:seed:defaults": "tsx server/src/db/seed-defaults.ts"
+  },
   "dependencies": {
-    "@replit/connectors-sdk": "^0.4.1"
+    "@types/node": "^22.10.5",
+    "@fastify/cors": "^10.0.2",
+    "@fastify/helmet": "^13.0.1",
+    "@fastify/rate-limit": "^10.2.2",
+    "fastify": "^5.2.1",
+    "firebase": "^11.10.0",
+    "firebase-admin": "^13.0.2",
+    "pg": "^8.13.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
-    "prettier": "^3.9.6",
-    "typescript": "~5.9.3"
+    "@eslint/js": "^9.17.0",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "tsx": "^4.19.2",
+    "vite": "^6.0.5",
+    "vitest": "^3.2.7"
   }
 }
