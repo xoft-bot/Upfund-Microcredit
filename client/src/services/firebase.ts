@@ -4,7 +4,7 @@ import type { UserRole } from '../../../shared/contracts.js';
 
 export type FirebaseClientMode = 'live' | 'mock';
 export interface FirebaseClientConfig { apiKey: string; authDomain: string; projectId: string; storageBucket: string; messagingSenderId: string; appId: string; }
-export interface AuthIdentity { uid: string; collectorId: string; role: UserRole; branchId: string | null; branchName?: string; }
+export interface AuthIdentity { uid: string; collectorId: string; role: UserRole; branchId: string | null; clientId: string | null; branchName?: string; }
 const config: FirebaseClientConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? '',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ?? '',
@@ -35,6 +35,7 @@ export function identityFromClaims(uid: string, claims: Record<string, unknown>)
     collectorId: typeof claims.collectorId === 'string' && claims.collectorId ? claims.collectorId : uid,
     role,
     branchId: typeof claims.branchId === 'string' && claims.branchId ? claims.branchId : null,
+    clientId: typeof claims.clientId === 'string' && claims.clientId ? claims.clientId : null,
     branchName: typeof claims.branchName === 'string' && claims.branchName ? claims.branchName : undefined,
   };
 }

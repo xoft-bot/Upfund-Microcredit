@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { pool, withTransaction, type DbClient } from '../db.js';
 import type { UserRole } from '../../../shared/contracts.js';
 
-const allowedRoles = new Set<UserRole>(['admin', 'manager', 'officer', 'collector', 'accountant']);
+const allowedRoles = new Set<UserRole>(['admin', 'manager', 'officer', 'collector', 'accountant', 'client', 'marketing']);
 const codePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -16,6 +16,7 @@ export interface SeedUser {
   displayName: string;
   role: UserRole;
   branchCode?: string | null;
+  clientId?: string | null;
   status?: 'active' | 'disabled';
 }
 export interface SeedLoanProduct { code: string; name: string; currency?: string; active?: boolean; }
@@ -70,9 +71,12 @@ export function parseSeedInput(raw: unknown): SeedInput {
     if (!uuidPattern.test(id)) throw new Error('SEED_INVALID_USER_ID');
     const firebaseUid = requiredText(value.firebaseUid, 'firebase_uid');
     const branchCode = value.branchCode === null || value.branchCode === undefined ? null : stableCode(value.branchCode, 'branch');
+    const clientId = value.clientId === null || value.clientId === undefined ? null : requiredText(value.clientId, 'client_id');
+    if (clientId && !uuidPattern.test(clientId)) throw new Error('SEED_INVALID_CLIENT_ID');
     const status: SeedUser['status'] = value.status === undefined ? 'active' : value.status as SeedUser['status'];
     if (status !== 'active' && status !== 'disabled') throw new Error('SEED_INVALID_USER_STATUS');
-    return { id, firebaseUid, email: value.email === undefined ? undefined : requiredText(value.email, 'user_email'), displayName: requiredText(value.displayName, 'display_name'), role, branchCode, status };
+    if (role === 'client' && !clientId) throw new Error('SEED_CLIENT_ID_REQUIRED');
+    return { id, firebaseUid, email: value.email === undefined ? undefined : requiredText(value.email, 'user_email'), displayName: requiredText(value.displayName, 'display_name'), role, branchCode, clientId, status };
   });
   const loanProducts = listValue(input.loanProducts, 'loan_products').map((item) => {
     const value = objectValue(item, 'loan_product');
@@ -100,7 +104,7 @@ export async function readApprovedSeedInput(filePath = process.env.SEED_INPUT_FI
   return parseSeedInput(parsed);
 }
 
-const roleNames: Record<UserRole, string> = { admin: 'Administrator', manager: 'Manager', officer: 'Loan Officer', collector: 'Field Collector', accountant: 'Accountant' };
+const roleNames: Record<UserRole, string> = { admin: 'Administrator', manager: 'Manager', officer: 'Loan Officer', collector: 'Field Collector', accountant: 'Accountant', client: 'Client', marketing: 'Marketing' };
 
 export async function seedDatabase(input: SeedInput, transaction: TransactionRunner = withTransaction): Promise<SeedResult> {
   const validated = parseSeedInput(input);
@@ -129,16 +133,17 @@ export async function seedDatabase(input: SeedInput, transaction: TransactionRun
 
     for (const user of validated.users) {
       await client.query(
-        `INSERT INTO users (id, firebase_uid, email, display_name, status, role_id, branch_id)
-         VALUES ($1, $2, $3, $4, $5::user_status, $6, $7)
+        `INSERT INTO users (id, firebase_uid, email, display_name, status, role_id, branch_id, client_id)
+          VALUES ($1, $2, $3, $4, $5::user_status, $6, $7, $8)
          ON CONFLICT (firebase_uid) DO UPDATE SET
            email = EXCLUDED.email,
            display_name = EXCLUDED.display_name,
            status = EXCLUDED.status,
            role_id = EXCLUDED.role_id,
            branch_id = EXCLUDED.branch_id,
+            client_id = EXCLUDED.client_id,
            updated_at = now()`,
-        [user.id, user.firebaseUid, user.email ?? null, user.displayName, user.status ?? 'active', roleIds.get(user.role), user.branchCode ? branchIds.get(user.branchCode) : null],
+        [user.id, user.firebaseUid, user.email ?? null, user.displayName, user.status ?? 'active', roleIds.get(user.role), user.branchCode ? branchIds.get(user.branchCode) : null, user.clientId ?? null],
       );
     }
 

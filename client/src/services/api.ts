@@ -52,6 +52,20 @@ export interface CollectionRecordResult {
 export interface ReconciliationQueuePayment { paymentId: string; clientId: string | null; amount: number; receiptReference: string | null; status: string; principalAmount: number; penaltyAmount: number; interestAmount: number; overpaymentAmount: number; }
 export interface ReconciliationQueueBatch { id: string; batchReference: string; branchId: string; collectionDate: string; expectedAmount: number; recordedAmount: number; submittedAmount: number; variance: number; status: string; submittedBy: string; submittedByName: string | null; payments: ReconciliationQueuePayment[]; }
 export interface HealthResult { service: string; database: string; }
+export interface PortalApplication { id: string; clientId: string; clientName: string; productName: string; branchId: string; requestedAmount: number; status: string; createdAt: string; submittedAt: string | null; }
+export interface PortalLoan { id: string; clientId: string; clientName: string; branchId: string; principalAmount: number; outstandingPrincipal: number; status: string; createdAt: string; }
+export interface PortalClient { id: string; externalRef: string; displayName: string; branchId: string; createdAt: string; }
+export interface PortalProduct { id: string; code: string; name: string; currency: string; active: boolean; }
+export interface PortalOverview {
+  role: string;
+  metrics: { clients: number; applications: number; submittedApplications: number; activeLoans: number; outstandingPrincipal: number; products: number };
+  applications: PortalApplication[];
+  loans: PortalLoan[];
+  clients: PortalClient[];
+  products: PortalProduct[];
+}
+export interface CreateClientCommand { branchId: string; externalRef: string; displayName: string; }
+export interface CreateApplicationCommand { clientId: string; productId: string; branchId?: string; requestedAmount: number; }
 
 export class ApiRequestError extends Error {
   readonly code: string;
@@ -86,4 +100,28 @@ export function getReconciliationQueue(token: string, options: { branchId?: stri
   const params = new URLSearchParams();
   if (options.branchId) params.set('branchId', options.branchId);
   return request<{ batches: ReconciliationQueueBatch[] }>(`${options.apiBaseUrl ?? ''}/api/v1/reconciliations/queue${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
+}
+export function getPortalOverview(token: string): Promise<PortalOverview> {
+  return request<PortalOverview>('/api/v1/portal/overview', { headers: { authorization: `Bearer ${token}` } });
+}
+export function createClient(command: CreateClientCommand, token: string): Promise<PortalClient> {
+  return request<PortalClient>('/api/v1/clients', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
+}
+export function createLoanApplication(command: CreateApplicationCommand, token: string): Promise<PortalApplication> {
+  return request<PortalApplication>('/api/v1/loan-applications', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
+}
+export function submitLoanApplication(id: string, token: string): Promise<{ id: string; status: string }> {
+  return request<{ id: string; status: string }>(`/api/v1/loan-applications/${id}/submit`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+}
+export function reviewApplicationKyc(id: string, command: { status: 'verified' | 'rejected'; verificationMethod: string; reason?: string }, token: string): Promise<{ id: string; applicationStatus: string; kycStatus: string }> {
+  return request<{ id: string; applicationStatus: string; kycStatus: string }>(`/api/v1/loan-applications/${id}/kyc`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
+}
+export function assessApplicationRisk(id: string, command: { score: number; riskGrade: string; status: 'approved' | 'declined'; policyVersion: string }, token: string): Promise<{ id: string; applicationStatus: string; riskStatus: string }> {
+  return request<{ id: string; applicationStatus: string; riskStatus: string }>(`/api/v1/loan-applications/${id}/risk`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
+}
+export function decideApplication(id: string, command: { decision: 'approve' | 'reject'; reason: string }, token: string): Promise<{ id: string; status: string; loanId?: string }> {
+  return request<{ id: string; status: string; loanId?: string }>(`/api/v1/loan-applications/${id}/decision`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
+}
+export function disburseLoan(id: string, command: { disbursementReference: string; idempotencyKey: string }, token: string): Promise<{ loanId: string; status: string; disbursementReference: string; amount: number; created: boolean }> {
+  return request<{ loanId: string; status: string; disbursementReference: string; amount: number; created: boolean }>(`/api/v1/loans/${id}/disburse`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
 }

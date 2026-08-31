@@ -13,6 +13,7 @@ import { registerReconciliationRoutes } from './routes/reconciliations.js';
 import { registerWebhookRoutes } from './routes/webhookRoutes.js';
 import { registerTelemetryRoutes } from './routes/telemetryRoutes.js';
 import { registerCollectionQueryRoutes } from './routes/collectionQueries.js';
+import { registerLifecycleRoutes } from './routes/lifecycle.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
@@ -36,6 +37,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   registerWebhookRoutes(app);
   registerTelemetryRoutes(app, options.tokenVerifier, options.userResolver);
   registerCollectionQueryRoutes(app, options.tokenVerifier, options.userResolver);
+  registerLifecycleRoutes(app, options.tokenVerifier, options.userResolver);
   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],
@@ -63,10 +65,10 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error({ err: error, correlationId: request.headers['x-correlation-id'] }, 'request failed');
-    const candidate = error as { statusCode?: number; message?: string };
+    const candidate = error as { statusCode?: number; code?: string; message?: string };
     const status = candidate.statusCode && candidate.statusCode >= 400 ? candidate.statusCode : 500;
     const message = status === 500 ? 'Internal server error' : (candidate.message ?? 'Request failed');
-    reply.code(status).send({ ok: false, error: { code: status === 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR', message }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
+    reply.code(status).send({ ok: false, error: { code: status === 500 ? 'INTERNAL_ERROR' : (candidate.code ?? 'REQUEST_ERROR'), message }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
   });
   return app;
 }
