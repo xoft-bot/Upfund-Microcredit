@@ -83,8 +83,15 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...init, headers: { Accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers } });
+const configuredApiBaseUrl = (import.meta.env.VITE_API_URL ?? '').trim().replace(/\/+$/, '');
+
+function apiUrl(path: string, apiBaseUrl?: string): string {
+  const base = apiBaseUrl?.trim() ? apiBaseUrl.trim().replace(/\/+$/, '') : configuredApiBaseUrl;
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, apiBaseUrl?: string): Promise<T> {
+  const response = await fetch(apiUrl(path, apiBaseUrl), { ...init, headers: { Accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers } });
   const body = await response.json() as ApiEnvelope<T>;
   if (!response.ok || !body.ok || body.data === undefined) throw new ApiRequestError(body.error?.code ?? 'API_REQUEST_FAILED', body.error?.message ?? 'API request failed', body.correlationId, response.status);
   return body.data;
@@ -92,18 +99,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function getHealth(): Promise<HealthResult> { return request<HealthResult>('/health'); }
 export function getSession(token: string): Promise<SessionProfile> { return request<SessionProfile>('/api/v1/session', { headers: { authorization: `Bearer ${token}` } }); }
-export function postPayment(command: PaymentCommand, token?: string, apiBaseUrl = '', correlationId: string = crypto.randomUUID()): Promise<PaymentResult> { return request<PaymentResult>(`${apiBaseUrl}/api/v1/payments`, { method: 'POST', headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'x-correlation-id': correlationId }, body: JSON.stringify(command) }); }
-export function postReconciliation(command: ReconciliationCommand, token: string, apiBaseUrl = ''): Promise<ReconciliationResult> { return request<ReconciliationResult>(`${apiBaseUrl}/api/v1/reconciliations/post-batch`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(command) }); }
+export function postPayment(command: PaymentCommand, token?: string, apiBaseUrl = '', correlationId: string = crypto.randomUUID()): Promise<PaymentResult> { return request<PaymentResult>('/api/v1/payments', { method: 'POST', headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'x-correlation-id': correlationId }, body: JSON.stringify(command) }, apiBaseUrl); }
+export function postReconciliation(command: ReconciliationCommand, token: string, apiBaseUrl = ''): Promise<ReconciliationResult> { return request<ReconciliationResult>('/api/v1/reconciliations/post-batch', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(command) }, apiBaseUrl); }
 export function getCollectionQueue(token: string, options: { branchId?: string; collectorId?: string; apiBaseUrl?: string } = {}): Promise<{ records: CollectionRecordResult[] }> {
   const params = new URLSearchParams();
   if (options.branchId) params.set('branchId', options.branchId);
   if (options.collectorId) params.set('collectorId', options.collectorId);
-  return request<{ records: CollectionRecordResult[] }>(`${options.apiBaseUrl ?? ''}/api/v1/collections/queue${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
+  return request<{ records: CollectionRecordResult[] }>(`/api/v1/collections/queue${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } }, options.apiBaseUrl);
 }
 export function getReconciliationQueue(token: string, options: { branchId?: string; apiBaseUrl?: string } = {}): Promise<{ batches: ReconciliationQueueBatch[] }> {
   const params = new URLSearchParams();
   if (options.branchId) params.set('branchId', options.branchId);
-  return request<{ batches: ReconciliationQueueBatch[] }>(`${options.apiBaseUrl ?? ''}/api/v1/reconciliations/queue${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
+  return request<{ batches: ReconciliationQueueBatch[] }>(`/api/v1/reconciliations/queue${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } }, options.apiBaseUrl);
 }
 export function getManagerReport(token: string, options: { branchId?: string; asOf?: string; from?: string; to?: string } = {}): Promise<ManagerReportingSnapshot> {
   const params = new URLSearchParams();
