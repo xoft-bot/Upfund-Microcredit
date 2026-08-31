@@ -78,6 +78,14 @@ npm run db:seed
 The seed command fails closed without approved input and does not create sample
 branches, users, loans, payments, or financial values.
 
+For the approved operational defaults used by the initial pilot, run the
+idempotent defaults command. It creates or updates only the `MAIN` branch and
+the active UGX `STARTER`, `WORKING_CAPITAL`, and `EMERGENCY` loan products:
+
+```bash
+npm run db:seed:defaults
+```
+
 ## 3. Configure and deploy Firebase Hosting
 
 Build the PWA with public Firebase web configuration and the real Render API

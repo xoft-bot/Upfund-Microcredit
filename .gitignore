@@ -5,6 +5,8 @@ functions/lib/
 .env
 .env.*
 !.env.example
+.firebase/*.cache
+attached_assets/*firebase-adminsdk*.json
 coverage/
 *.log
 .DS_Store

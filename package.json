@@ -20,7 +20,8 @@
     "test:watch": "vitest",
     "db:migrate": "tsx server/src/db/migrate.ts",
     "db:check": "tsx server/src/db/check-schema.ts",
-    "db:seed": "tsx server/src/db/seed.ts"
+    "db:seed": "tsx server/src/db/seed.ts",
+    "db:seed:defaults": "tsx server/src/db/seed-defaults.ts"
   },
   "dependencies": {
     "@types/node": "^22.10.5",
