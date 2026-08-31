@@ -6,4 +6,5 @@
 - [Reporting scope separation](reporting-scope-separation.md) — current portfolio risk scope and historical accounting-period scope must remain separate in read models.
 - [Route reporting aggregation](route-reporting-aggregation.md) — aggregate client schedules and collection actuals independently before joining at route level.
 - [Flutterwave opt-in](flutterwave-opt-in.md) — the legacy provider is disabled by default and must never gate Firebase/Postgres startup or deployment.
+- [Render database diagnostics](render-database-diagnostics.md) — a started Render API can still fail PostgreSQL connectivity; public health responses intentionally redact driver details.
 - [GitHub API sync](github-api-sync.md) — API-published commits get new SHAs; fetch and align local main afterward to clear Git-tab divergence.
