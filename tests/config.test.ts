@@ -25,7 +25,10 @@ describe('production runtime guardrails', () => {
   });
 
   it('does not require Flutterwave configuration when the integration is disabled', () => {
-    const { FLUTTERWAVE_ENABLED: _enabled, FLUTTERWAVE_SECRET_HASH: _hash, FLUTTERWAVE_ACTOR_USER_ID: _actor, ...withoutFlutterwave } = productionEnv;
+    const withoutFlutterwave = { ...productionEnv };
+    delete withoutFlutterwave.FLUTTERWAVE_ENABLED;
+    delete withoutFlutterwave.FLUTTERWAVE_SECRET_HASH;
+    delete withoutFlutterwave.FLUTTERWAVE_ACTOR_USER_ID;
     expect(validateRuntimeConfig(withoutFlutterwave)).toMatchObject({ isProduction: true });
   });
 

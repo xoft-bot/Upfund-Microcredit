@@ -21,7 +21,7 @@ import { registerCollectorReportingRoutes } from './routes/collectorReporting.js
 import { isFlutterwaveEnabled, isProductionRuntime, validateRuntimeConfig } from './config.js';
 import { registerStaticAssets } from './static-assets.js';
 
-export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
+export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver; serveStatic?: boolean } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
   const runtimeConfig = validateRuntimeConfig();
   app.register(cors, { origin: runtimeConfig.allowedOrigins.length ? runtimeConfig.allowedOrigins : false });
@@ -61,7 +61,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   registerReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerAccountantReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerCollectorReportingRoutes(app, options.tokenVerifier, options.userResolver);
-  if (isProductionRuntime()) registerStaticAssets(app);
+  if (isProductionRuntime() && options.serveStatic !== false) registerStaticAssets(app);
   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],

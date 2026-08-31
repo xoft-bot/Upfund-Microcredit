@@ -1,6 +1,7 @@
 node_modules/
 client/dist/
 dist/
+functions/lib/
 .env
 .env.*
 !.env.example
