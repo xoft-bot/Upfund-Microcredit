@@ -9,13 +9,22 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 export const DEFAULT_SERVER_PORT = 10_000;
 
 export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.NODE_ENV === 'production' || env.APP_ENV === 'production';
+  return env.NODE_ENV?.trim() === 'production' || env.APP_ENV?.trim() === 'production';
 }
 
 function required(env: NodeJS.ProcessEnv, key: string, missing: string[]): string {
   const value = env[key]?.trim();
   if (!value) missing.push(key);
   return value ?? '';
+}
+
+export function getFirebasePrivateKey(env: NodeJS.ProcessEnv = process.env): string {
+  const rawPrivateKey = env.FIREBASE_PRIVATE_KEY || '';
+  return rawPrivateKey.replace(/\\n/g, '\n');
+}
+
+export function getFirebaseAuthMode(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.FIREBASE_AUTH_MODE?.trim() || env.FIREBASE_MODE?.trim() || '').toLowerCase();
 }
 
 export function getDatabaseConnectionString(env: NodeJS.ProcessEnv = process.env, missing: string[] = []): string {
@@ -61,7 +70,7 @@ export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Run
 
   if (!production) return { isProduction: false, allowedOrigins: env.CORS_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? [] };
 
-  if (env.FIREBASE_MODE !== 'live') throw new Error('PRODUCTION_FIREBASE_LIVE_REQUIRED');
+  if (getFirebaseAuthMode(env) !== 'live') throw new Error('PRODUCTION_FIREBASE_LIVE_REQUIRED');
   required(env, 'FIREBASE_PROJECT_ID', missing);
   required(env, 'FIREBASE_CLIENT_EMAIL', missing);
   required(env, 'FIREBASE_PRIVATE_KEY', missing);

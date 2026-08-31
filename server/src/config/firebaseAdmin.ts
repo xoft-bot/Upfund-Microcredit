@@ -1,11 +1,11 @@
 import admin from 'firebase-admin';
 import type { TokenVerifier } from '../middleware/auth.js';
-import { isProductionRuntime } from '../config.js';
+import { getFirebaseAuthMode, getFirebasePrivateKey, isProductionRuntime } from '../config.js';
 
 export type FirebaseMode = 'live' | 'mock';
-export function getFirebaseMode(): FirebaseMode { return process.env.FIREBASE_MODE === 'mock' ? 'mock' : 'live'; }
+export function getFirebaseMode(): FirebaseMode { return getFirebaseAuthMode() === 'mock' ? 'mock' : 'live'; }
 function requireLiveCredentials(): { projectId: string; clientEmail: string; privateKey: string } {
-  const projectId = process.env.FIREBASE_PROJECT_ID ?? ''; const clientEmail = process.env.FIREBASE_CLIENT_EMAIL ?? ''; const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') ?? '';
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim() ?? ''; const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim() ?? ''; const privateKey = getFirebasePrivateKey();
   if (!projectId || !clientEmail || !privateKey) throw new Error('FIREBASE_ADMIN_CREDENTIALS_NOT_CONFIGURED');
   return { projectId, clientEmail, privateKey };
 }
@@ -23,4 +23,4 @@ export function createConfiguredTokenVerifier(): TokenVerifier {
   return async (token) => getFirebaseApp().auth().verifyIdToken(token, true);
 }
 
-export function isFirebaseLive(): boolean { return getFirebaseMode() === 'live' && Boolean(process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY); }
+export function isFirebaseLive(): boolean { return getFirebaseMode() === 'live' && Boolean(process.env.FIREBASE_PROJECT_ID?.trim() && process.env.FIREBASE_CLIENT_EMAIL?.trim() && getFirebasePrivateKey().trim()); }

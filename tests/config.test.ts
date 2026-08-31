@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateRuntimeConfig } from '../server/src/config.js';
+import { getFirebaseAuthMode, getFirebasePrivateKey, validateRuntimeConfig } from '../server/src/config.js';
 
 const productionEnv = {
   NODE_ENV: 'production',
@@ -19,6 +19,16 @@ describe('production runtime guardrails', () => {
 
   it('accepts live Firebase, database, and HTTPS CORS configuration', () => {
     expect(validateRuntimeConfig(productionEnv)).toMatchObject({ isProduction: true, allowedOrigins: ['https://pilot.example.com', 'https://admin.example.com'] });
+  });
+
+  it('accepts the canonical auth mode with surrounding whitespace', () => {
+    expect(getFirebaseAuthMode({ FIREBASE_AUTH_MODE: '  live  ', FIREBASE_MODE: 'mock' })).toBe('live');
+    expect(getFirebaseAuthMode({ FIREBASE_AUTH_MODE: '   ', FIREBASE_MODE: ' live ' })).toBe('live');
+    expect(validateRuntimeConfig({ ...productionEnv, FIREBASE_MODE: undefined, FIREBASE_AUTH_MODE: '  live  ' })).toMatchObject({ isProduction: true });
+  });
+
+  it('normalizes escaped private-key newlines', () => {
+    expect(getFirebasePrivateKey({ FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----' })).toBe('-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----');
   });
 
   it('rejects wildcard production CORS and only requires JWT_SECRET for JWT mode', () => {
