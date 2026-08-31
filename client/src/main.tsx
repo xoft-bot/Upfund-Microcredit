@@ -9,6 +9,7 @@ import { getCollectionQueue, getHealth, getReconciliationQueue, getSession, type
 import { getFirebaseIdToken, signOutFirebase, subscribeToFirebaseAuth, type AuthIdentity, type AuthSession } from './services/firebase.js';
 import type { FieldCollectionRecord, QueueMetrics, QueueSnapshot } from './types/field-ops.js';
 import { PortalDashboard } from './components/portals/PortalDashboard.js';
+import { CollectorReportingDashboard } from './components/portals/CollectorReportingDashboard.js';
 import { SignInCard } from './components/auth/SignInCard.js';
 
 const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
@@ -172,6 +173,7 @@ function App() {
         ? <PortalDashboard identity={identity} />
         : collectorContextReady
           ? <div className="workflow-grid">
+            <CollectorReportingDashboard identity={identity} />
             <CollectorRouteView queue={queue} routeName={routeName} records={displayedRecords} metrics={metrics} queueReady={queueReady} queueError={queueError} onCollect={() => document.getElementById('collection-form')?.scrollIntoView({ behavior: 'smooth' })} />
             <div id="collection-form">
               <FieldCollectionForm queue={queue} collectorId={identity.collectorId} branchId={identity.branchId!} deviceId={getDeviceId()} onQueued={addRecord} disabled={!queueReady || Boolean(queueError)} />

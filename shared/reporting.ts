@@ -182,3 +182,86 @@ export interface AccountantReportingSnapshot {
   reconciliationOverrides: AccountantReconciliationAudit[];
   varianceLogs: AccountantReconciliationAudit[];
 }
+
+export interface CollectorReportingFilters {
+  asOf: string;
+  from: string;
+  to: string;
+  branchId: string | null;
+  collectorId: string | null;
+}
+
+export interface CollectorTargetProgress {
+  targetAmount: number;
+  actualAmount: number;
+  pendingAmount: number;
+  progressPercent: number;
+  scheduledClientCount: number;
+  overdueClientCount: number;
+}
+
+export interface CollectorRouteMetric {
+  routeCode: string;
+  assignedClientCount: number;
+  targetAmount: number;
+  actualAmount: number;
+  pendingAmount: number;
+  progressPercent: number;
+}
+
+export interface CollectorSchedule {
+  scheduleId: string;
+  clientId: string;
+  clientName: string;
+  loanId: string;
+  dueOn: string;
+  amountDue: number;
+  amountPaid: number;
+  remainingAmount: number;
+  status: string;
+  routeCode: string;
+}
+
+export interface CollectorOverdueAccount {
+  clientId: string;
+  clientName: string;
+  loanId: string;
+  oldestDueOn: string;
+  daysOverdue: number;
+  overdueAmount: number;
+  routeCode: string;
+}
+
+export interface CollectorPaymentMethodSummary {
+  paymentMethod: string;
+  postedCount: number;
+  postedAmount: number;
+  pendingCount: number;
+  pendingAmount: number;
+}
+
+export interface CollectorOfflineQueueItem {
+  id: string;
+  localId: string;
+  clientId: string;
+  clientName: string;
+  loanId: string | null;
+  routeCode: string;
+  amount: number;
+  capturedAt: string;
+  status: string;
+  syncStatus: 'queued' | 'pending_reconciliation' | 'posted' | 'verified' | 'reversed';
+  paymentMethod: string;
+  receiptReference: string | null;
+  syncedAt: string | null;
+}
+
+export interface CollectorReportingSnapshot {
+  filters: CollectorReportingFilters;
+  targetProgress: CollectorTargetProgress;
+  routes: CollectorRouteMetric[];
+  assignedClientSchedules: CollectorSchedule[];
+  overdueWatchlist: CollectorOverdueAccount[];
+  paymentMethods: CollectorPaymentMethodSummary[];
+  offlineQueue: CollectorOfflineQueueItem[];
+}

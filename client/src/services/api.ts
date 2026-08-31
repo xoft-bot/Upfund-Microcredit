@@ -1,4 +1,4 @@
-import type { AccountantReportingSnapshot, ManagerReportingSnapshot } from '../../../shared/reporting.js';
+import type { AccountantReportingSnapshot, CollectorReportingSnapshot, ManagerReportingSnapshot } from '../../../shared/reporting.js';
 
 export interface ApiEnvelope<T> { ok: boolean; data?: T; error?: { code?: string; message?: string }; correlationId?: string; version?: string; }
 export interface PaymentCommand {
@@ -120,6 +120,15 @@ export function getAccountantReport(token: string, options: { branchId?: string;
   if (options.from) params.set('from', options.from);
   if (options.to) params.set('to', options.to);
   return request<AccountantReportingSnapshot>(`/api/v1/reports/accountant${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
+}
+export function getCollectorReport(token: string, options: { branchId?: string; collectorId?: string; asOf?: string; from?: string; to?: string } = {}): Promise<CollectorReportingSnapshot> {
+  const params = new URLSearchParams();
+  if (options.branchId) params.set('branchId', options.branchId);
+  if (options.collectorId) params.set('collectorId', options.collectorId);
+  if (options.asOf) params.set('asOf', options.asOf);
+  if (options.from) params.set('from', options.from);
+  if (options.to) params.set('to', options.to);
+  return request<CollectorReportingSnapshot>(`/api/v1/reports/collector${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
 }
 export function getPortalOverview(token: string): Promise<PortalOverview> {
   return request<PortalOverview>('/api/v1/portal/overview', { headers: { authorization: `Bearer ${token}` } });

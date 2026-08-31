@@ -17,6 +17,7 @@ import { registerLifecycleRoutes } from './routes/lifecycle.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { registerReportingRoutes } from './routes/reporting.js';
 import { registerAccountantReportingRoutes } from './routes/accountantReporting.js';
+import { registerCollectorReportingRoutes } from './routes/collectorReporting.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
@@ -44,6 +45,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   registerSessionRoutes(app, options.tokenVerifier, options.userResolver);
   registerReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerAccountantReportingRoutes(app, options.tokenVerifier, options.userResolver);
+  registerCollectorReportingRoutes(app, options.tokenVerifier, options.userResolver);
   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],
