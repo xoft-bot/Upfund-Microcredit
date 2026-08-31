@@ -16,27 +16,93 @@ export interface ReconciliationPostInput {
   paymentIds: string[];
   policyVersion: string;
   managerOverride: boolean;
+  decision?: 'approve' | 'reject';
+  decisionReason?: string;
   correlationId: string;
 }
 
 type Policy = { version: string; credit_loss_bps: number; operating_bps: number; collection_bps: number; growth_bps: number };
 type Pool = { id: string; pool_type: 'credit_loss_reserve' | 'operating_reserve' | 'collection' | 'growth'; balance: number };
+export interface ReconciliationPostResult {
+  reconciliationId: string;
+  status: string;
+  variance: number;
+  allocation?: ReturnType<typeof allocateRealizedSurplus>;
+  ledgerTransactionId?: string;
+  created?: boolean;
+  decisionReason?: string | null;
+}
 
-export async function postReconciliationBatch(input: ReconciliationPostInput) {
+export async function postReconciliationBatch(input: ReconciliationPostInput): Promise<ReconciliationPostResult> {
   return withTransaction(async (client) => postReconciliationBatchOnClient(client, input));
 }
 
-async function postReconciliationBatchOnClient(client: DbClient, input: ReconciliationPostInput) {
+async function postReconciliationBatchOnClient(client: DbClient, input: ReconciliationPostInput): Promise<ReconciliationPostResult> {
   const result = calculateReconciliation(input);
-  if (result.status === 'variance' && (!input.managerOverride || !['admin', 'manager'].includes(input.actorRole))) throw new Error('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');
-  const status = result.status === 'variance' ? 'approved' : 'matched';
-  const reconciliation = await client.query<{ id: string }>(
-    `INSERT INTO reconciliations (branch_id, batch_reference, expected_amount, recorded_amount, submitted_amount, variance, status, submitted_by, reviewed_by, reviewed_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::reconciliation_status, $8, $9, CASE WHEN $7 = 'approved' THEN now() ELSE NULL END) RETURNING id`,
-    [input.branchId, input.batchReference, result.expectedAmount, result.recordedAmount, result.submittedAmount, result.variance, status, input.actorUserId, status === 'approved' ? input.actorUserId : null],
+  const reason = input.decisionReason?.trim() ?? '';
+  if (result.status === 'variance' && input.decision !== 'reject' && (!input.managerOverride || !['admin', 'manager'].includes(input.actorRole))) throw new Error('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');
+  if (result.status === 'variance' && !['admin', 'manager'].includes(input.actorRole)) throw new Error('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');
+  if (result.status === 'variance' && !input.decision) throw new Error('RECONCILIATION_DECISION_REQUIRED');
+  if (result.status === 'variance' && !reason) throw new Error('RECONCILIATION_DECISION_REASON_REQUIRED');
+
+  const existingResult = await client.query<{
+    id: string;
+    branch_id: string;
+    expected_amount: string;
+    recorded_amount: string;
+    submitted_amount: string;
+    variance: string;
+    status: 'pending' | 'matched' | 'variance' | 'approved' | 'rejected';
+    decision_reason: string | null;
+  }>(
+    `SELECT id, branch_id, expected_amount, recorded_amount, submitted_amount, variance, status, decision_reason
+       FROM reconciliations
+      WHERE batch_reference = $1
+      FOR UPDATE`,
+    [input.batchReference],
   );
-  const reconciliationId = reconciliation.rows[0].id;
-  for (const paymentId of input.paymentIds) await client.query('INSERT INTO reconciliation_payments (reconciliation_id, payment_id) VALUES ($1, $2)', [reconciliationId, paymentId]);
+  let reconciliationId: string;
+  if (existingResult.rowCount) {
+    const existing = existingResult.rows[0];
+    const sameFacts = existing.branch_id === input.branchId
+      && Number(existing.expected_amount) === result.expectedAmount
+      && Number(existing.recorded_amount) === result.recordedAmount
+      && Number(existing.submitted_amount) === result.submittedAmount
+      && Number(existing.variance) === result.variance;
+    if (!sameFacts) throw new Error('RECONCILIATION_BATCH_STALE');
+    if (['matched', 'approved', 'rejected'].includes(existing.status)) {
+      return { reconciliationId: existing.id, status: existing.status, variance: Number(existing.variance), created: false, decisionReason: existing.decision_reason };
+    }
+    reconciliationId = existing.id;
+  } else {
+    const reconciliation = await client.query<{ id: string }>(
+      `INSERT INTO reconciliations (branch_id, batch_reference, expected_amount, recorded_amount, submitted_amount, variance, status, submitted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::reconciliation_status, $8) RETURNING id`,
+      [input.branchId, input.batchReference, result.expectedAmount, result.recordedAmount, result.submittedAmount, result.variance, result.status, input.actorUserId],
+    );
+    reconciliationId = reconciliation.rows[0].id;
+  }
+  for (const paymentId of input.paymentIds) {
+    await client.query('INSERT INTO reconciliation_payments (reconciliation_id, payment_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [reconciliationId, paymentId]);
+  }
+
+  if (result.status === 'variance' && input.decision === 'reject') {
+    await client.query(`UPDATE reconciliations SET status = 'rejected', decision_reason = $1, reviewed_by = $2, reviewed_at = now() WHERE id = $3`, [reason, input.actorUserId, reconciliationId]);
+    await insertAuditEvent(client, {
+      actorUserId: input.actorUserId,
+      action: 'reconciliation.batch.rejected',
+      entityType: 'reconciliation',
+      entityId: reconciliationId,
+      correlationId: input.correlationId,
+      metadata: { variance: result.variance, reason },
+    });
+    return { reconciliationId, status: 'rejected', variance: result.variance, created: true, decisionReason: reason };
+  }
+
+  const status = result.status === 'variance' ? 'approved' : 'matched';
+  if (result.status === 'variance') {
+    await client.query(`UPDATE reconciliations SET status = 'approved', decision_reason = $1, reviewed_by = $2, reviewed_at = now() WHERE id = $3`, [reason, input.actorUserId, reconciliationId]);
+  }
   const policyRow = await client.query<Policy>('SELECT version, credit_loss_bps, operating_bps, collection_bps, growth_bps FROM allocation_policies WHERE version = $1 FOR UPDATE', [input.policyVersion]);
   if (!policyRow.rowCount) throw new Error('ALLOCATION_POLICY_NOT_FOUND');
   const policy = policyRow.rows[0];
@@ -108,5 +174,5 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
       overpaymentHeld: Number(totals.overpayment_amount),
     },
   });
-  return { reconciliationId, status, variance: result.variance, allocation, ledgerTransactionId: ledger.transactionId };
+  return { reconciliationId, status, variance: result.variance, allocation, ledgerTransactionId: ledger.transactionId, created: true, decisionReason: result.status === 'variance' ? reason : null };
 }

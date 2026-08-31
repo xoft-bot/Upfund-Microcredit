@@ -52,6 +52,8 @@ export interface ReconciliationBatchView {
   submittedAmount: number;
   variance: number;
   status: string;
+  decisionReason: string | null;
+  reviewedAt: string | null;
   submittedBy: string;
   submittedByName: string | null;
   payments: ReconciliationPaymentView[];
@@ -134,13 +136,15 @@ export async function listPendingReconciliations(input: { branchId: string; limi
     submitted_amount: string;
     variance: string;
     status: string;
+    decision_reason: string | null;
+    reviewed_at: Date | null;
     submitted_by: string;
     submitted_by_name: string | null;
     payments: ReconciliationPaymentView[] | null;
   }>(
     `SELECT r.id, r.batch_reference, r.branch_id, r.created_at::date AS collection_date,
             r.expected_amount, r.recorded_amount, r.submitted_amount, r.variance,
-            r.status, r.submitted_by, submitter.display_name AS submitted_by_name,
+            r.status, r.decision_reason, r.reviewed_at, r.submitted_by, submitter.display_name AS submitted_by_name,
             COALESCE(
               jsonb_agg(jsonb_build_object(
                 'paymentId', p.id,
@@ -177,6 +181,8 @@ export async function listPendingReconciliations(input: { branchId: string; limi
     submittedAmount: toNumber(row.submitted_amount),
     variance: toNumber(row.variance),
     status: row.status,
+    decisionReason: row.decision_reason,
+    reviewedAt: row.reviewed_at?.toISOString() ?? null,
     submittedBy: row.submitted_by,
     submittedByName: row.submitted_by_name,
     payments: row.payments ?? [],

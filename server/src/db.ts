@@ -27,6 +27,23 @@ export async function withTransaction<T>(fn: (client: DbClient) => Promise<T>): 
   }
 }
 
+export async function withAdvisoryLock<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
+  const client = await pool.connect();
+  let locked = false;
+  try {
+    const result = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext($1)) AS locked`,
+      [key],
+    );
+    locked = result.rows[0]?.locked === true;
+    if (!locked) return null;
+    return await fn();
+  } finally {
+    if (locked) await client.query(`SELECT pg_advisory_unlock(hashtext($1))`, [key]);
+    client.release();
+  }
+}
+
 export async function insertAuditEvent(
   client: DbClient,
   input: {

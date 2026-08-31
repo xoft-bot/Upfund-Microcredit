@@ -24,8 +24,8 @@ export interface PaymentResult {
   ledgerTransactionId: string;
   created: boolean;
 }
-export interface ReconciliationCommand { branchId: string; batchReference: string; expectedAmount: number; recordedAmount: number; submittedAmount: number; paymentIds: string[]; policyVersion: string; managerOverride: boolean; }
-export interface ReconciliationResult { reconciliationId: string; status: string; variance: number; }
+export interface ReconciliationCommand { branchId: string; batchReference: string; expectedAmount: number; recordedAmount: number; submittedAmount: number; paymentIds: string[]; policyVersion: string; managerOverride: boolean; decision?: 'approve' | 'reject'; decisionReason?: string; }
+export interface ReconciliationResult { reconciliationId: string; status: string; variance: number; decisionReason?: string | null; created?: boolean; }
 export interface CollectionRecordResult {
   id: string;
   localId: string;
@@ -50,7 +50,7 @@ export interface CollectionRecordResult {
   syncedAt: string | null;
 }
 export interface ReconciliationQueuePayment { paymentId: string; clientId: string | null; amount: number; receiptReference: string | null; status: string; principalAmount: number; penaltyAmount: number; interestAmount: number; overpaymentAmount: number; }
-export interface ReconciliationQueueBatch { id: string; batchReference: string; branchId: string; collectionDate: string; expectedAmount: number; recordedAmount: number; submittedAmount: number; variance: number; status: string; submittedBy: string; submittedByName: string | null; payments: ReconciliationQueuePayment[]; }
+export interface ReconciliationQueueBatch { id: string; batchReference: string; branchId: string; collectionDate: string; expectedAmount: number; recordedAmount: number; submittedAmount: number; variance: number; status: string; decisionReason: string | null; reviewedAt: string | null; submittedBy: string; submittedByName: string | null; payments: ReconciliationQueuePayment[]; }
 export interface HealthResult { service: string; database: string; }
 export interface PortalApplication { id: string; clientId: string; clientName: string; productName: string; branchId: string; requestedAmount: number; status: string; createdAt: string; submittedAt: string | null; }
 export interface PortalLoan { id: string; clientId: string; clientName: string; branchId: string; principalAmount: number; outstandingPrincipal: number; status: string; createdAt: string; }

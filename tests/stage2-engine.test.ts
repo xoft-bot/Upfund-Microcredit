@@ -72,4 +72,18 @@ describe('Task 3 payment waterfall', () => {
   it('keeps principal and overpayment out of realized charge allocation', () => {
     expect(realizedChargeFromComponents({ principalAmount: 100_000, penaltyAmount: 5_000, interestAmount: 20_000, overpaymentAmount: 10_000 })).toBe(25_000);
   });
+
+  it('allocates pools from realized charges, never from the gross payment', () => {
+    const payment = { principalAmount: 100_000, penaltyAmount: 5_000, interestAmount: 20_000, overpaymentAmount: 10_000 };
+    const allocation = allocateRealizedSurplus(realizedChargeFromComponents(payment), {
+      version: 'v1',
+      creditLossBps: 2_500,
+      operatingBps: 2_500,
+      collectionBps: 2_500,
+      growthBps: 2_500,
+    });
+    expect(allocation.realizedCharge).toBe(25_000);
+    expect(allocation.creditLossReserve + allocation.operatingReserve + allocation.collectionCost + allocation.growthCapital + allocation.retainedProfit).toBe(25_000);
+    expect(allocation.realizedCharge).not.toBe(payment.principalAmount + payment.penaltyAmount + payment.interestAmount + payment.overpaymentAmount);
+  });
 });

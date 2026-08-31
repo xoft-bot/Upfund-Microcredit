@@ -25,4 +25,14 @@ describe('reconciliation cron', () => {
     const result = await runReconciliationCycle(options, { loadCandidates: async () => null });
     expect(result.skipped).toBe(true); expect(result.processed).toBe(0);
   });
+
+  it('does not execute a cycle when the scheduler lock is unavailable', async () => {
+    const loadCandidates = vi.fn(async () => candidates);
+    const result = await runReconciliationCycle(options, {
+      loadCandidates,
+      acquireLock: async () => null,
+    });
+    expect(result).toEqual({ processed: 0, posted: 0, quarantined: 0, skipped: true });
+    expect(loadCandidates).not.toHaveBeenCalled();
+  });
 });

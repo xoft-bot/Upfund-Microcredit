@@ -119,4 +119,85 @@ suite('Stage 2 atomic payment and reconciliation', () => {
     const result = await pool!.query('SELECT 1 FROM reconciliations WHERE batch_reference = $1', [batch]);
     expect(result.rowCount).toBe(0);
   });
+
+  it('allocates reconciliation pools from realized charges only', async () => {
+    const client = await pool!.connect();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    const scheduleId = randomUUID();
+    const policyVersion = `policy-${randomUUID()}`;
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Allocation Client')`, [clientId, branchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Allocation Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due, penalty_due, interest_due) VALUES ($1, $2, CURRENT_DATE, 100000, 25000, 5000, 20000)`, [scheduleId, loanId]);
+      for (const poolType of ['credit_loss_reserve', 'operating_reserve', 'collection', 'growth']) {
+        await client.query(`INSERT INTO capital_pools (branch_id, pool_type, balance) VALUES ($1, $2::pool_type, 0)`, [branchId, poolType]);
+      }
+      await client.query(`INSERT INTO allocation_policies (version, credit_loss_bps, operating_bps, collection_bps, growth_bps, effective_from) VALUES ($1, 2500, 2500, 2500, 2500, now())`, [policyVersion]);
+      await client.query('COMMIT');
+
+      const payment = await postManualPayment({
+        actorUserId: userId,
+        loanId,
+        branchId,
+        clientId,
+        amount: 135_000,
+        idempotencyKey: `payment-${loanId}`,
+        localId: `local-${randomUUID()}`,
+        deviceId: 'device-allocation',
+        paymentMethod: 'cash',
+        correlationId: randomUUID(),
+      });
+      const reconciliation = await postReconciliationBatch({
+        actorUserId: userId,
+        actorRole: 'manager',
+        branchId,
+        batchReference: `matched-${randomUUID()}`,
+        expectedAmount: 135_000,
+        recordedAmount: 135_000,
+        submittedAmount: 135_000,
+        paymentIds: [payment.paymentId],
+        policyVersion,
+        managerOverride: false,
+        correlationId: randomUUID(),
+      });
+      expect(reconciliation.allocation?.realizedCharge).toBe(25_000);
+      const allocated = await pool!.query<{ total: string }>('SELECT COALESCE(SUM(amount), 0) AS total FROM pool_allocations WHERE ledger_transaction_id = $1', [reconciliation.ledgerTransactionId]);
+      expect(allocated.rows[0].total).toBe('25000');
+      expect(allocated.rows[0].total).not.toBe('135000');
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it('persists a manager rejection reason and makes the terminal result idempotent', async () => {
+    const batchReference = `variance-${randomUUID()}`;
+    const input = {
+      actorUserId: userId,
+      actorRole: 'manager' as const,
+      branchId,
+      batchReference,
+      expectedAmount: 10_000,
+      recordedAmount: 9_000,
+      submittedAmount: 9_000,
+      paymentIds: [] as string[],
+      policyVersion: 'unused-for-rejection',
+      managerOverride: false,
+      decision: 'reject' as const,
+      decisionReason: 'Cash count requires correction before posting.',
+      correlationId: randomUUID(),
+    };
+    const rejected = await postReconciliationBatch(input);
+    expect(rejected).toMatchObject({ status: 'rejected', variance: -1_000, created: true, decisionReason: input.decisionReason });
+    const stored = await pool!.query<{ status: string; decision_reason: string; reviewed_by: string }>('SELECT status, decision_reason, reviewed_by FROM reconciliations WHERE batch_reference = $1', [batchReference]);
+    expect(stored.rows[0]).toEqual({ status: 'rejected', decision_reason: input.decisionReason, reviewed_by: userId });
+    const retry = await postReconciliationBatch({ ...input, correlationId: randomUUID() });
+    expect(retry).toMatchObject({ status: 'rejected', created: false, decisionReason: input.decisionReason });
+  });
 });
