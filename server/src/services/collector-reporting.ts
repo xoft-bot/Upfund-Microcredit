@@ -32,11 +32,6 @@ interface TargetRow {
   overdue_client_count: string;
 }
 
-interface RouteRow extends TargetRow {
-  route_code: string;
-  assigned_client_count: string;
-}
-
 async function readTargetProgress(input: NormalizedCollectorInput): Promise<{ targetProgress: CollectorTargetProgress; routes: CollectorRouteMetric[] }> {
   const result = await pool.query<TargetRow & { route_code: string | null; assigned_client_count: string }>(
     `WITH active_assignments AS (

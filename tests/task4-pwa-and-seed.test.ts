@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { identityFromClaims } from '../client/src/services/firebase.js';
 import { OfflineQueue } from '../client/src/services/offlineQueue.js';
 import type { FieldCollectionRecord } from '../client/src/types/field-ops.js';
-import { parseSeedInput, readApprovedSeedInput, seedDatabase, type SeedInput } from '../server/src/db/seed.js';
+import { parseSeedInput, readApprovedSeedInput, seedDatabase, stableAdminUserId, withAdminFirebaseUid, type SeedInput } from '../server/src/db/seed.js';
 import type { DbClient } from '../server/src/db.js';
 
 const storage = new Map<string, string>();
@@ -95,5 +95,18 @@ describe('Task 4 fail-closed seed', () => {
       }],
     });
     expect(parsed.collectorAssignments).toEqual([expect.objectContaining({ officerFirebaseUid: 'firebase-collector-1', routeCode: 'KLA-CENTRAL-A', effectiveTo: null })]);
+  });
+
+  it('creates a deterministic admin mapping from a supplied Firebase UID', () => {
+    const admin = withAdminFirebaseUid({ approved: true, branches: [], users: [], loanProducts: [] }, 'firebase-admin-real');
+    expect(admin.users).toEqual([expect.objectContaining({ id: stableAdminUserId('firebase-admin-real'), firebaseUid: 'firebase-admin-real', role: 'admin', displayName: 'Administrator' })]);
+    expect(parseSeedInput(admin).users).toHaveLength(1);
+  });
+
+  it('promotes an existing supplied Firebase UID without duplicating it', () => {
+    const input = withAdminFirebaseUid(approvedSeed, approvedSeed.users[0].firebaseUid);
+    expect(input.users).toHaveLength(1);
+    expect(input.users[0].role).toBe('admin');
+    expect(withAdminFirebaseUid(input, approvedSeed.users[0].firebaseUid).users).toHaveLength(1);
   });
 });

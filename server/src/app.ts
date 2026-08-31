@@ -10,7 +10,6 @@ import { postLedgerTransactionOnClient } from './services/ledger.js';
 import { SYSTEM_VERSION } from '../../shared/version.js';
 import { registerPaymentRoutes } from './routes/payments.js';
 import { registerReconciliationRoutes } from './routes/reconciliations.js';
-import { registerWebhookRoutes } from './routes/webhookRoutes.js';
 import { registerTelemetryRoutes } from './routes/telemetryRoutes.js';
 import { registerCollectionQueryRoutes } from './routes/collectionQueries.js';
 import { registerLifecycleRoutes } from './routes/lifecycle.js';
@@ -18,10 +17,9 @@ import { registerSessionRoutes } from './routes/session.js';
 import { registerReportingRoutes } from './routes/reporting.js';
 import { registerAccountantReportingRoutes } from './routes/accountantReporting.js';
 import { registerCollectorReportingRoutes } from './routes/collectorReporting.js';
-import { isFlutterwaveEnabled, isProductionRuntime, validateRuntimeConfig } from './config.js';
-import { registerStaticAssets } from './static-assets.js';
+import { isProductionRuntime, validateRuntimeConfig } from './config.js';
 
-export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver; serveStatic?: boolean } = {}) {
+export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
   const runtimeConfig = validateRuntimeConfig();
   app.register(cors, { origin: runtimeConfig.allowedOrigins.length ? runtimeConfig.allowedOrigins : false });
@@ -50,10 +48,6 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
 
   registerPaymentRoutes(app, options.tokenVerifier, options.userResolver);
   registerReconciliationRoutes(app, options.tokenVerifier, options.userResolver);
-  const flutterwaveEnabled = isFlutterwaveEnabled();
-  if (!flutterwaveEnabled && process.env.NODE_ENV !== 'test') app.log.info('Flutterwave webhook integration disabled');
-  if (flutterwaveEnabled && !process.env.FLUTTERWAVE_SECRET_HASH && !isProductionRuntime()) app.log.warn('Flutterwave webhook is enabled without a secret; using development fallback hash');
-  registerWebhookRoutes(app, { enabled: flutterwaveEnabled });
   registerTelemetryRoutes(app, options.tokenVerifier, options.userResolver);
   registerCollectionQueryRoutes(app, options.tokenVerifier, options.userResolver);
   registerLifecycleRoutes(app, options.tokenVerifier, options.userResolver);
@@ -61,7 +55,6 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   registerReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerAccountantReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerCollectorReportingRoutes(app, options.tokenVerifier, options.userResolver);
-  if (isProductionRuntime() && options.serveStatic !== false) registerStaticAssets(app);
   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],

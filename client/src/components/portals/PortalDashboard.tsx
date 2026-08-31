@@ -46,7 +46,6 @@ export function PortalDashboard({ identity }: PortalDashboardProps) {
   const copy = portalCopy[identity.role as keyof typeof portalCopy] ?? portalCopy.officer;
   const isManager = identity.role === 'admin' || identity.role === 'manager';
   const isOfficer = identity.role === 'officer';
-  const isCollector = identity.role === 'collector';
   const isClient = identity.role === 'client';
   const isMarketing = identity.role === 'marketing';
   const isAccountant = identity.role === 'accountant';

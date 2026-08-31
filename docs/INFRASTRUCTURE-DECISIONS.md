@@ -43,7 +43,7 @@ The existing investment-club Firebase project must not be used by any of these e
 | Hosting | Preview/development deployment | Release-candidate deployment | Protected production deployment |
 | Cloud Storage | Synthetic documents | Synthetic/anonymized documents | Private KYC/document storage |
 | Firestore | Not authoritative; emulator or supporting metadata only if needed | Supporting metadata only if needed | Supporting metadata only if needed |
-| Cloud Functions/Run adapters | Mock/sandbox providers | Sandbox providers | Production providers only after approval |
+| Managed server adapters | Mock/sandbox providers | Sandbox providers | Production providers only after approval |
 | Analytics | Off or separated | Off unless testing | Production property only |
 
 Firestore is not the financial source of truth. If it is enabled for a supporting feature, it must not contain a competing balance, ledger, repayment, or capital-pool truth.
@@ -58,7 +58,7 @@ staging -> letsgrow-microcredit-staging
 prod    -> letsgrow-microcredit-prod
 ```
 
-Environment variables must be named by function, not by provider-specific implementation. Examples include `DATABASE_URL`, `DATABASE_POOL_MAX`, `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_AUTH_TENANT`, `API_BASE_URL`, `APP_ENV`, `ALLOWED_ORIGINS`, `SENTRY_DSN` or equivalent error-tracking endpoint, and provider-specific secrets. Only public Firebase web configuration may be exposed to the PWA; Cloud SQL credentials, Firebase Admin credentials, webhook secrets, and signing keys remain server-side.
+Environment variables must be named by function, not by provider-specific implementation. Examples include `DATABASE_URL`, `DATABASE_POOL_MAX`, `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_AUTH_TENANT`, `VITE_API_BASE_URL`, `APP_ENV`, `CORS_ORIGINS`, `SENTRY_DSN` or equivalent error-tracking endpoint, and provider-specific secrets. Only public Firebase web configuration may be exposed to the PWA; PostgreSQL credentials, Firebase Admin credentials, and signing keys remain server-side.
 
 ## Provider change policy
 

@@ -83,9 +83,9 @@ export class ApiRequestError extends Error {
   }
 }
 
-const configuredApiBaseUrl = (import.meta.env.VITE_API_URL ?? '').trim().replace(/\/+$/, '');
+const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
 
-function apiUrl(path: string, apiBaseUrl?: string): string {
+export function apiUrl(path: string, apiBaseUrl?: string): string {
   const base = apiBaseUrl?.trim() ? apiBaseUrl.trim().replace(/\/+$/, '') : configuredApiBaseUrl;
   return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 }

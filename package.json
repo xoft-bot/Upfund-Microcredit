@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "tsx server/src/index.ts",
+    "dev:server": "PORT=${PORT:-3000} tsx server/src/index.ts",
     "dev:client": "vite --config client/vite.config.ts",
-    "start": "NODE_ENV=production tsx server/src/index.ts",
-    "build:functions": "tsc -p functions/tsconfig.json",
-    "build": "tsc -p tsconfig.json && npm run build:functions && vite build --config client/vite.config.ts",
+    "start": "NODE_ENV=production node dist/server/server/src/index.js",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build": "tsc -p tsconfig.json && npm run build:server && vite build --config client/vite.config.ts",
     "lint": "eslint client/src server/src shared tests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -25,7 +25,6 @@
     "fastify": "^5.2.1",
     "firebase": "^11.10.0",
     "firebase-admin": "^13.0.2",
-    "firebase-functions": "^7.3.2",
     "pg": "^8.13.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

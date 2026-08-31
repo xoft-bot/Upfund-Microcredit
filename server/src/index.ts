@@ -1,10 +1,10 @@
 import { buildApp } from './app.js';
 import { runReconciliationCycle } from './jobs/reconciliationCron.js';
-import { validateRuntimeConfig } from './config.js';
+import { getServerPort, validateRuntimeConfig } from './config.js';
 
 validateRuntimeConfig();
 const app = buildApp();
-const port = Number(process.env.PORT ?? 3000);
+const port = getServerPort();
 
 app.listen({ port, host: process.env.HOST ?? '0.0.0.0' }).catch((error) => {
   app.log.error(error);

@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { pool, withTransaction, type DbClient } from '../db.js';
@@ -38,6 +39,13 @@ export interface SeedInput {
 export interface SeedResult { branches: number; users: number; loanProducts: number; collectorAssignments: number; }
 export type TransactionRunner = <T>(fn: (client: DbClient) => Promise<T>) => Promise<T>;
 
+export function stableAdminUserId(firebaseUid: string): string {
+  const digest = createHash('sha256').update(`upfund-admin:${firebaseUid}`).digest('hex').slice(0, 32).split('');
+  digest[12] = '5';
+  digest[16] = ['8', '9', 'a', 'b'][parseInt(digest[16], 16) % 4];
+  return `${digest.slice(0, 8).join('')}-${digest.slice(8, 12).join('')}-${digest.slice(12, 16).join('')}-${digest.slice(16, 20).join('')}-${digest.slice(20).join('')}`;
+}
+
 function requiredText(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`SEED_INVALID_${label.toUpperCase()}`);
   return value.trim();
@@ -71,7 +79,7 @@ function dateValue(value: unknown, label: string): string {
   return date;
 }
 
-export function parseSeedInput(raw: unknown): SeedInput {
+export function parseSeedInput(raw: unknown, options: { allowEmpty?: boolean } = {}): SeedInput {
   if (!raw || typeof raw !== 'object' || (raw as { approved?: unknown }).approved !== true) throw new Error('SEED_INPUT_NOT_APPROVED');
   const input = raw as Record<string, unknown>;
   const branches = listValue(input.branches, 'branches').map((item) => {
@@ -110,7 +118,7 @@ export function parseSeedInput(raw: unknown): SeedInput {
     if (effectiveTo && effectiveTo < effectiveFrom) throw new Error('SEED_INVALID_ASSIGNMENT_DATE_RANGE');
     return { officerFirebaseUid, clientId, branchCode: stableCode(value.branchCode, 'branch'), routeCode: stableCode(value.routeCode, 'route_code'), effectiveFrom, effectiveTo };
   });
-  if (branches.length + users.length + loanProducts.length + collectorAssignments.length === 0) throw new Error('SEED_INPUT_EMPTY');
+  if (!options.allowEmpty && branches.length + users.length + loanProducts.length + collectorAssignments.length === 0) throw new Error('SEED_INPUT_EMPTY');
   uniqueCodes(branches, 'branch');
   uniqueCodes(loanProducts, 'loan_product');
   if (new Set(users.map((user) => user.firebaseUid)).size !== users.length) throw new Error('SEED_DUPLICATE_FIREBASE_UID');
@@ -124,19 +132,35 @@ export function parseSeedInput(raw: unknown): SeedInput {
   return { approved: true, branches, users, loanProducts, collectorAssignments };
 }
 
-export async function readApprovedSeedInput(filePath = process.env.SEED_INPUT_FILE, inlineJson = process.env.SEED_INPUT_JSON): Promise<SeedInput> {
+export function withAdminFirebaseUid(input: SeedInput, firebaseUid: string): SeedInput {
+  const uid = requiredText(firebaseUid, 'admin_firebase_uid');
+  const existing = input.users.find((user) => user.firebaseUid === uid);
+  if (existing) {
+    return {
+      ...input,
+      users: input.users.map((user) => user.firebaseUid === uid ? { ...user, role: 'admin' } : user),
+    };
+  }
+  return {
+    ...input,
+    users: [...input.users, { id: stableAdminUserId(uid), firebaseUid: uid, displayName: 'Administrator', role: 'admin', status: 'active' }],
+  };
+}
+
+export async function readApprovedSeedInput(filePath = process.env.SEED_INPUT_FILE, inlineJson = process.env.SEED_INPUT_JSON, adminFirebaseUid = process.env.ADMIN_FIREBASE_UID): Promise<SeedInput> {
   if (filePath && inlineJson) throw new Error('SEED_INPUT_AMBIGUOUS');
   if (!filePath && !inlineJson) throw new Error('SEED_INPUT_REQUIRED');
   const raw = filePath ? await readFile(resolve(filePath), 'utf8') : inlineJson!;
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new Error('SEED_INPUT_INVALID_JSON'); }
-  return parseSeedInput(parsed);
+  return parseSeedInput(parsed, { allowEmpty: Boolean(adminFirebaseUid?.trim()) });
 }
 
 const roleNames: Record<UserRole, string> = { admin: 'Administrator', manager: 'Manager', officer: 'Loan Officer', collector: 'Field Collector', accountant: 'Accountant', client: 'Client', marketing: 'Marketing' };
 
-export async function seedDatabase(input: SeedInput, transaction: TransactionRunner = withTransaction): Promise<SeedResult> {
-  const validated = parseSeedInput(input);
+export async function seedDatabase(input: SeedInput, transaction: TransactionRunner = withTransaction, adminFirebaseUid = process.env.ADMIN_FIREBASE_UID): Promise<SeedResult> {
+  const parsed = parseSeedInput(input, { allowEmpty: Boolean(adminFirebaseUid?.trim()) });
+  const validated = adminFirebaseUid?.trim() ? parseSeedInput(withAdminFirebaseUid(parsed, adminFirebaseUid)) : parsed;
   return transaction(async (client) => {
     const branchIds = new Map<string, string>();
     for (const branch of validated.branches) {
@@ -205,7 +229,7 @@ export async function seedDatabase(input: SeedInput, transaction: TransactionRun
 
 export async function runSeedFromEnvironment(): Promise<SeedResult> {
   const input = await readApprovedSeedInput();
-  return seedDatabase(input);
+  return seedDatabase(input, withTransaction, process.env.ADMIN_FIREBASE_UID);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { AuthIdentity } from '../../services/firebase.js';
 import { getCollectorReport } from '../../services/api.js';
 import type { CollectorReportingSnapshot } from '../../../../shared/reporting.js';
@@ -20,7 +20,7 @@ export function CollectorReportingDashboard({ identity }: CollectorReportingDash
   const [error, setError] = useState('');
   const [asOf, setAsOf] = useState(today);
 
-  const load = async (date = asOf) => {
+  const load = useCallback(async (date = asOf) => {
     setLoading(true);
     setError('');
     try {
@@ -32,9 +32,9 @@ export function CollectorReportingDashboard({ identity }: CollectorReportingDash
     } finally {
       setLoading(false);
     }
-  };
+  }, [asOf, identity.branchId]);
 
-  useEffect(() => { void load(); }, [identity.uid]);
+  useEffect(() => { void load(); }, [identity.uid, load]);
 
   if (loading && !snapshot) return <section className="reporting-shell portal-card" role="status"><p className="eyebrow">Route reporting</p><h3>Loading route status…</h3></section>;
   if (error && !snapshot) return <section className="reporting-shell portal-card" aria-labelledby="collector-report-error"><p className="eyebrow">Route reporting</p><h3 id="collector-report-error">Reporting unavailable</h3><p className="form-error" role="alert">{error.includes('403') || error.includes('FORBIDDEN') ? 'Your account is not authorized to view route reporting.' : error}</p><button className="primary-button" type="button" onClick={() => void load()}>Retry</button></section>;
@@ -42,7 +42,7 @@ export function CollectorReportingDashboard({ identity }: CollectorReportingDash
 
   const progress = Math.min(snapshot.targetProgress.progressPercent, 100);
   return <section className="reporting-shell collector-reporting" aria-labelledby="collector-report-title">
-    <div className="reporting-heading"><div><p className="eyebrow">Field route status</p><h3 id="collector-report-title">Today’s collection plan</h3><p className="note">Targets are the scheduled amount due for your active client assignments.</p></div><label className="reporting-filter">As of<input type="date" value={asOf} onChange={(event) => { setAsOf(event.target.value); void load(event.target.value); }} /></label></div>
+     <div className="reporting-heading"><div><p className="eyebrow">Field route status</p><h3 id="collector-report-title">Today’s collection plan</h3><p className="note">Targets are the scheduled amount due for your active client assignments.</p></div><label className="reporting-filter">As of<input type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></label></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="portal-metrics reporting-metrics">
       <Metric label="Daily target" value={money(snapshot.targetProgress.targetAmount)} detail={`${snapshot.targetProgress.scheduledClientCount} clients scheduled`} />

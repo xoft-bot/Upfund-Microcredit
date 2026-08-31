@@ -29,7 +29,7 @@ The principal residual production risk is operational rather than a demonstrated
 
 Authentication requires a Firebase-verified bearer token, an allowed role, and branch scope where a command carries branch identity. Invalid or absent credentials fail closed. Error envelopes expose stable codes and messages rather than stack traces or internal exceptions.
 
-Flutterwave webhook requests require an exact secret-hash match using constant-time comparison after equal-length validation. Payload normalization rejects unsupported events, unsuccessful charges, unsafe amounts, missing references, and unsupported currencies. Replayed transaction references continue through the server idempotency path rather than creating duplicate ledger transactions.
+Payment requests use authenticated, server-authoritative posting and the existing idempotency path so replayed commands do not create duplicate ledger transactions.
 
 Ledger and reconciliation operations remain server-authoritative and transactional. Append-only history, database balance triggers, row locking, advisory-lock protection for scheduled reconciliation, and explicit variance quarantine prevent silent financial mutation. A non-zero reconciliation variance cannot auto-post or move capital pools without authorized manager action.
 

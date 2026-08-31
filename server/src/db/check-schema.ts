@@ -6,4 +6,4 @@ const found = new Set(result.rows.map((row) => row.tablename));
 const missing = required.filter((table) => !found.has(table));
 await pool.end();
 if (missing.length) throw new Error(`Missing tables: ${missing.join(', ')}`);
-console.log(`Verified ${required.length} Stage 1/4 tables`);
+console.log(`Verified all ${required.length} required custom tables`);

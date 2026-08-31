@@ -6,13 +6,10 @@ export interface RuntimeConfig {
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const DEFAULT_SERVER_PORT = 10_000;
 
 export function isProductionRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV === 'production' || env.APP_ENV === 'production';
-}
-
-export function isFlutterwaveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.FLUTTERWAVE_ENABLED === 'true';
 }
 
 function required(env: NodeJS.ProcessEnv, key: string, missing: string[]): string {
@@ -21,10 +18,21 @@ function required(env: NodeJS.ProcessEnv, key: string, missing: string[]): strin
   return value ?? '';
 }
 
+export function getDatabaseConnectionString(env: NodeJS.ProcessEnv = process.env, missing: string[] = []): string {
+  const value = env.DATABASE_URL?.trim() || env.PGURI?.trim();
+  if (!value) missing.push('DATABASE_URL');
+  return value ?? '';
+}
+
+export function getServerPort(env: NodeJS.ProcessEnv = process.env): number {
+  const configured = Number(env.PORT);
+  return Number.isInteger(configured) && configured > 0 && configured <= 65_535 ? configured : DEFAULT_SERVER_PORT;
+}
+
 function parseProductionOrigins(raw: string, missing: string[]): string[] {
   const origins = raw.split(',').map((origin) => origin.trim()).filter(Boolean);
   if (origins.length === 0) {
-    missing.push('ALLOWED_ORIGINS');
+    missing.push('CORS_ORIGINS');
     return [];
   }
   for (const origin of origins) {
@@ -41,7 +49,7 @@ function parseProductionOrigins(raw: string, missing: string[]): string[] {
 export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const production = isProductionRuntime(env);
   const missing: string[] = [];
-  const databaseUrl = required(env, 'DATABASE_URL', missing);
+  const databaseUrl = getDatabaseConnectionString(env, missing);
   if (production && databaseUrl) {
     try {
       const parsed = new URL(databaseUrl);
@@ -51,18 +59,13 @@ export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Run
     }
   }
 
-  if (!production) return { isProduction: false, allowedOrigins: env.ALLOWED_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? [] };
+  if (!production) return { isProduction: false, allowedOrigins: env.CORS_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? [] };
 
   if (env.FIREBASE_MODE !== 'live') throw new Error('PRODUCTION_FIREBASE_LIVE_REQUIRED');
   required(env, 'FIREBASE_PROJECT_ID', missing);
   required(env, 'FIREBASE_CLIENT_EMAIL', missing);
   required(env, 'FIREBASE_PRIVATE_KEY', missing);
-  const origins = parseProductionOrigins(env.ALLOWED_ORIGINS ?? '', missing);
-  if (isFlutterwaveEnabled(env)) {
-    required(env, 'FLUTTERWAVE_SECRET_HASH', missing);
-    const webhookActorId = required(env, 'FLUTTERWAVE_ACTOR_USER_ID', missing);
-    if (webhookActorId && !uuidPattern.test(webhookActorId)) throw new Error('FLUTTERWAVE_ACTOR_USER_ID_INVALID');
-  }
+  const origins = parseProductionOrigins(env.CORS_ORIGINS ?? '', missing);
   if (env.JWT_AUTH_ENABLED === 'true') required(env, 'JWT_SECRET', missing);
   if (env.RECONCILIATION_SCHEDULER_ENABLED === 'true') {
     const actorId = required(env, 'RECONCILIATION_SCHEDULER_ACTOR_USER_ID', missing);

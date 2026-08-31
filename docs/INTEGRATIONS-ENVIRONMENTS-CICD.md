@@ -28,7 +28,7 @@ Firebase Authentication, database, object storage, and server execution are foun
 
 Pull requests run formatting, linting, type checks, unit tests, financial invariant tests, API contract compatibility checks, security-rule tests, dependency auditing, and production-like builds. A preview deployment uses synthetic data and posts a review URL. A release candidate runs integration and end-to-end tests against staging, migration checks, load smoke tests, and a restore verification.
 
-Production deployment requires protected approval. The pipeline deploys frontend assets, server functions/services, database rules, indexes, and migrations in an ordered process, then executes smoke tests for authentication, client lookup, loan application, and a non-monetary test transaction. Financial data migrations require a separate approval record and rollback or forward-fix plan.
+Production deployment requires protected approval. The pipeline deploys frontend assets, the managed API service, database rules, indexes, and migrations in an ordered process, then executes smoke tests for authentication, client lookup, loan application, and a non-monetary test transaction. Financial data migrations require a separate approval record and rollback or forward-fix plan.
 
 ## Logging and error tracking
 

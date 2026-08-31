@@ -175,16 +175,14 @@ There are no real portal shells or navigation paths for the brief's administrato
 
 **Present**
 
-- Flutterwave signature verification uses a timing-safe comparison.
-- Charge payloads are normalized and restricted to successful UGX events.
-- Webhook replays reuse the transaction reference as an idempotency key.
+- Manual and mobile-money payment commands use the same server-authoritative posting path.
+- Payment replays are handled by the existing idempotency contract.
 - Protected telemetry endpoints expose health, pool, queue, and audit-stream views.
 - Recursive sensitive-field masking is covered by tests.
 
 **Missing or unverified**
 
-- No live Flutterwave configuration or end-to-end provider verification is available in this environment.
-- The webhook calls the same manual payment service and does not persist the provider transaction reference or gateway-specific method on the payment.
+- No live external payment-provider configuration or end-to-end provider verification is present in this environment.
 - No SMS, email, notification, credit-bureau, accounting-export, or document-storage integration was found.
 - No external scheduler is configured for the reconciliation job.
 

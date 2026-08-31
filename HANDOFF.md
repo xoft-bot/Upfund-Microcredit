@@ -80,8 +80,18 @@ Do not use production credentials, production borrower data, live payment provid
 
 The production-hardening run confirmed that `DATABASE_URL` is not configured in the current shell. `.env.example` remains the non-secret configuration contract. Set `DATABASE_URL` to the TLS connection string supplied by Neon, Supabase, Render, or Cloud SQL, and keep it only in the hosting provider and CI secret store. The deployment database must run migrations `001_stage1_core.sql` through `005_field_collection_sources.sql` in order, followed by `npm run db:check`.
 
-Firebase has explicit modes. Local and CI use `FIREBASE_MODE=mock` and `VITE_FIREBASE_MODE=mock`; mock server tokens are permitted only outside production. Production must set `FIREBASE_MODE=live` and provide `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`. The client uses only public `VITE_FIREBASE_*` identifiers. The Admin SDK private key, database URL, Flutterwave secret, and service-user ID must never be exposed to the client or committed.
+Firebase has explicit modes. Local and CI use `FIREBASE_MODE=mock` and `VITE_FIREBASE_MODE=mock`; mock server tokens are permitted only outside production. Production must set `FIREBASE_MODE=live` and provide `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`. The client uses only public `VITE_FIREBASE_*` identifiers. The Admin SDK private key and database URL must never be exposed to the client or committed.
 
 The PII audit confirmed recursive masking for national IDs, borrower/client/loan identifiers, names, phone/mobile numbers, emails, tokens, secrets, passwords, private keys, authorization headers, and cookies in client telemetry and server audit-stream metadata. Top-level audit entity IDs are redacted in streamed output. The reconciliation dry-run processed two mock branch batches: one matched batch was eligible for posting and one `-5,000` UGX variance was quarantined and emitted a versioned alert with a correlation ID; no database writes occurred during dry-run mode.
 
 The current local verification environment does not expose a preconfigured `DATABASE_URL`; the hardening run used a disposable local PostgreSQL 16 database. `npm run db:migrate` completed idempotently with migrations `001` through `005` already applied, and `npm run db:check` verified 23 required tables. The full suite then reported **34/34 tests passing**, including all five database-backed tests, followed by a successful production build. The workflow file is intentionally not tracked in this repository because the GitHub App credential cannot publish `.github/workflows/*`; CI should run the documented commands using repository-hosted PostgreSQL and secrets once workflow permission is provisioned.
+
+## Render-only deployment boundary
+
+The production deployment now uses the standalone Fastify server on Render,
+Firebase Authentication and Hosting, and Supabase PostgreSQL. Firebase
+Functions are not part of the production path. The server build is emitted
+under `dist/server`, and `npm run start` executes the compiled entry point.
+Firebase Hosting serves `client/dist`; production client builds set
+`VITE_API_BASE_URL` to the real Render HTTPS service URL. See
+`docs/DEPLOYMENT-RENDER-FIREBASE.md` for the exact setup and smoke checks.

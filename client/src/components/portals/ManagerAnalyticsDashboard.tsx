@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { AuthIdentity } from '../../services/firebase.js';
 import { getFirebaseIdToken } from '../../services/firebase.js';
 import { getManagerReport } from '../../services/api.js';
@@ -26,7 +26,7 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const load = async (filters: { branchId?: string; from?: string; to?: string } = {}) => {
+  const load = useCallback(async (filters: { branchId?: string; from?: string; to?: string } = {}) => {
     setLoading(true);
     setError('');
     try {
@@ -38,9 +38,9 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
     } finally {
       setLoading(false);
     }
-  };
+  }, [identity.branchId, identity.role]);
 
-  useEffect(() => { void load({ branchId: identity.role === 'admin' ? branchId || undefined : undefined }); }, [identity.uid]);
+  useEffect(() => { void load({ branchId: identity.role === 'admin' ? branchId || undefined : undefined }); }, [branchId, identity.role, identity.uid, load]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
