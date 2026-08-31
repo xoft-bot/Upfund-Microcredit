@@ -1,10 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "types": ["node"],
     "noEmit": false,
     "rootDir": ".",
     "outDir": "dist/server",
     "sourceMap": true
   },
-  "include": ["server/src/**/*.ts", "shared/**/*.ts"]
+  "include": ["server/src/**/*.ts", "shared/**/*.ts"],
+  "exclude": ["client", "tests", "functions", "artifacts"]
 }
