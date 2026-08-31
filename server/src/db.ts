@@ -1,13 +1,62 @@
 import pg from 'pg';
+import { getDatabaseConnectionString, isProductionRuntime } from './config.js';
 
 const { Pool } = pg;
 
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL ?? process.env.PGURI,
-  max: Number(process.env.DATABASE_POOL_MAX ?? 5),
-  idleTimeoutMillis: 10_000,
-  connectionTimeoutMillis: 5_000,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
+export interface DatabasePoolSettings {
+  connectionString: string;
+  max: number;
+  idleTimeoutMillis: number;
+  connectionTimeoutMillis: number;
+  ssl?: { rejectUnauthorized: false };
+}
+
+export function getDatabasePoolSettings(env: NodeJS.ProcessEnv = process.env): DatabasePoolSettings {
+  const configuredMax = Number(env.DATABASE_POOL_MAX ?? 5);
+  const max = Number.isInteger(configuredMax) && configuredMax >= 5 && configuredMax <= 10 ? configuredMax : 5;
+  return {
+    connectionString: getDatabaseConnectionString(env),
+    max,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
+    ssl: isProductionRuntime(env) ? { rejectUnauthorized: false } : undefined,
+  };
+}
+
+export interface DatabaseErrorDiagnostic {
+  name: string;
+  code?: string;
+  message: string;
+  errno?: string | number;
+  syscall?: string;
+  address?: string;
+  port?: number;
+}
+
+function redactDatabaseMessage(message: string): string {
+  return message
+    .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, 'postgresql://<redacted>')
+    .replace(/(?:password|passwd|pwd)=[^\s&]+/gi, 'password=<redacted>')
+    .slice(0, 300);
+}
+
+export function summarizeDatabaseError(error: unknown): DatabaseErrorDiagnostic {
+  const value = error instanceof Error ? error as Error & Record<string, unknown> : { message: String(error) } as Record<string, unknown>;
+  return {
+    name: typeof value.name === 'string' ? value.name : 'DatabaseError',
+    ...(typeof value.code === 'string' ? { code: value.code } : {}),
+    message: redactDatabaseMessage(typeof value.message === 'string' ? value.message : 'Database operation failed'),
+    ...(typeof value.errno === 'string' || typeof value.errno === 'number' ? { errno: value.errno } : {}),
+    ...(typeof value.syscall === 'string' ? { syscall: value.syscall } : {}),
+    ...(typeof value.address === 'string' ? { address: value.address } : {}),
+    ...(typeof value.port === 'number' ? { port: value.port } : {}),
+  };
+}
+
+export const pool = new Pool(getDatabasePoolSettings());
+
+pool.on('error', (error) => {
+  console.error(JSON.stringify({ event: 'database_pool_error', ...summarizeDatabaseError(error) }));
 });
 
 export type DbClient = pg.PoolClient;

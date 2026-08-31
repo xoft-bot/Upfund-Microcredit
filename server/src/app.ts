@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
-import { pool, withTransaction, insertAuditEvent } from './db.js';
+import { pool, summarizeDatabaseError, withTransaction, insertAuditEvent } from './db.js';
 import { authMiddleware, type TokenVerifier, type UserResolver } from './middleware/auth.js';
 import { requireBranchScope, requireRoles } from './middleware/authorization.js';
 import { postLedgerTransactionOnClient } from './services/ledger.js';
@@ -41,7 +41,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
       const result = await pool.query('SELECT 1 AS ok');
       return { ok: true, data: { service: 'upfund-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
     } catch (error) {
-      request.log.error({ err: error, correlationId: request.headers['x-correlation-id'] }, 'health database check failed');
+      request.log.error({ database: summarizeDatabaseError(error), correlationId: request.headers['x-correlation-id'] }, 'health database check failed');
       return reply.code(503).send({ ok: false, data: { service: 'upfund-microcredit-api', database: 'down' }, error: { code: 'DATABASE_UNAVAILABLE', message: 'Database connectivity check failed' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
     }
   });

@@ -25,7 +25,7 @@ describe('Render runtime boundary', () => {
     expect(validateRuntimeConfig({
       NODE_ENV: 'production',
       APP_ENV: 'production',
-      DATABASE_URL: 'postgresql://db.example.test/app',
+      DATABASE_URL: 'postgresql://db.example.test:6543/app',
       FIREBASE_MODE: 'live',
       FIREBASE_PROJECT_ID: 'project',
       FIREBASE_CLIENT_EMAIL: 'admin@example.test',
@@ -37,7 +37,7 @@ describe('Render runtime boundary', () => {
     expect(validateRuntimeConfig({
       NODE_ENV: 'production',
       APP_ENV: 'production',
-      DATABASE_URL: 'postgresql://db.example.test/app',
+      DATABASE_URL: 'postgresql://db.example.test:6543/app',
       FIREBASE_MODE: 'live',
       FIREBASE_PROJECT_ID: 'project',
       FIREBASE_CLIENT_EMAIL: 'admin@example.test',

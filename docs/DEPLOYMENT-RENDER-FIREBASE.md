@@ -53,14 +53,18 @@ Set these as Render environment variables or secret values:
 | `NODE_ENV` | `production` |
 | `APP_ENV` | `production` |
 | `FIREBASE_MODE` | `live` |
-| `DATABASE_URL` or `PGURI` | Supabase PostgreSQL TLS connection string |
+| `DATABASE_POOLER_URL` | Preferred Supabase Transaction Pooler connection string on port `6543` |
+| `DATABASE_URL` or `PGURI` | Compatibility fallback; production still requires effective port `6543` |
 | `FIREBASE_PROJECT_ID` | Firebase project ID |
 | `FIREBASE_CLIENT_EMAIL` | Firebase Admin service-account email |
 | `FIREBASE_PRIVATE_KEY` | Firebase Admin private key |
 | `CORS_ORIGINS` | Optional comma-separated HTTP/HTTPS origins; blank or `*` uses Firebase Hosting defaults |
 | `ADMIN_FIREBASE_UID` | Optional real Firebase Auth UID for initial admin mapping |
 
-`DATABASE_URL` takes precedence when both database variables are present.
+`DATABASE_POOLER_URL` takes precedence when multiple database variables are
+present. Production requires the effective database port to be `6543`
+(Supabase Transaction Pooler); a direct `5432` URL fails fast with
+`DATABASE_POOLER_PORT_REQUIRED`.
 Production trims CORS values, removes trailing slashes, accepts valid HTTP/HTTPS
 origins, ignores wildcard or invalid list entries, and falls back to the
 Firebase Hosting defaults when no usable origin remains. Keep

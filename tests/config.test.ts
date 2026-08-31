@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PRODUCTION_CORS_ORIGINS, getFirebaseAuthMode, getFirebasePrivateKey, validateRuntimeConfig } from '../server/src/config.js';
+import { DEFAULT_PRODUCTION_CORS_ORIGINS, getDatabaseConnectionPort, getDatabaseConnectionString, getFirebaseAuthMode, getFirebasePrivateKey, SUPABASE_TRANSACTION_POOLER_PORT, validateRuntimeConfig } from '../server/src/config.js';
 
 const productionEnv = {
   NODE_ENV: 'production',
   APP_ENV: 'production',
-  DATABASE_URL: 'postgresql://pilot:password@example.test:5432/pilot',
+  DATABASE_URL: 'postgresql://pilot:password@example.test:6543/pilot',
   FIREBASE_MODE: 'live',
   FIREBASE_PROJECT_ID: 'pilot-project',
   FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk@example.test',
@@ -19,6 +19,17 @@ describe('production runtime guardrails', () => {
 
   it('accepts live Firebase and normalizes production CORS origins', () => {
     expect(validateRuntimeConfig({ ...productionEnv, CORS_ORIGINS: ' https://pilot.example.com///, http://admin.example.com/ ' })).toMatchObject({ isProduction: true, allowedOrigins: ['https://pilot.example.com', 'http://admin.example.com'] });
+  });
+
+  it('prefers the Supabase transaction pooler URL and exposes its port', () => {
+    const env = { ...productionEnv, DATABASE_POOLER_URL: 'postgresql://pooler.example.test:6543/pilot', DATABASE_URL: 'postgresql://direct.example.test:5432/pilot' };
+    expect(getDatabaseConnectionString(env)).toBe(env.DATABASE_POOLER_URL);
+    expect(getDatabaseConnectionPort(env)).toBe(SUPABASE_TRANSACTION_POOLER_PORT);
+    expect(validateRuntimeConfig(env)).toMatchObject({ isProduction: true });
+  });
+
+  it('rejects direct PostgreSQL port 5432 in production', () => {
+    expect(() => validateRuntimeConfig({ ...productionEnv, DATABASE_URL: 'postgresql://direct.example.test:5432/pilot' })).toThrow('DATABASE_POOLER_PORT_REQUIRED');
   });
 
   it('accepts the canonical auth mode with surrounding whitespace', () => {

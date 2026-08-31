@@ -12,6 +12,8 @@ services:
         value: production
       - key: FIREBASE_MODE
         value: live
+      - key: DATABASE_POOLER_URL
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: PGURI
