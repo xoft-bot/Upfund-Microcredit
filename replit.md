@@ -1,6 +1,6 @@
-# [Project name]
+# Upfund Microcredit
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Upfund is a branch-aware microcredit operations workspace for managing loan applications, disbursements, field collections, and portfolio reporting.
 
 ## Run & Operate
 
@@ -22,15 +22,25 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/upfund-microcredit/src/App.tsx` — imported/adapted frontend workspace and route surface
+- `artifacts/upfund-microcredit/src/index.css` — Upfund visual language and responsive layout
+- `artifacts/api-server/src/routes/portfolio.ts` — demo portfolio API and in-memory workflow actions
+- `lib/api-spec/openapi.yaml` — source-of-truth contract for the portfolio API
+- `lib/api-client-react/src/generated/` — generated React Query client and schemas
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The frontend uses the generated API client rather than duplicating request types.
+- The initial adaptation uses a small in-memory API dataset so the full workflow is usable immediately without provisioning external services.
+- Currency and branch context are Uganda-specific (UGX, Kampala Central) to match the source product domain.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Portfolio overview with metrics, application pipeline, repayment queue, and recent activity
+- Application review, advancement, and disbursement flows
+- Searchable client directory with client creation
+- Field collection capture for cash and mobile money
+- Reporting, role context, responsive navigation, and workspace preferences
 
 ## User preferences
 

@@ -1,0 +1,1 @@
+- [API codegen compatibility](api-codegen-compatibility.md) — OpenAPI integer fields can emit an unsupported zod.int() helper in this workspace.

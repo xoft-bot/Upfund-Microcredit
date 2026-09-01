@@ -6,6 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
+export interface Collection {
+  id: string;
+  clientName: string;
+  amount: number;
+  method: string;
   status: string;
+  recordedAt: string;
 }

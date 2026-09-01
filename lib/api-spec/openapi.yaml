@@ -10,6 +10,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: portfolio
+    description: Portfolio overview and activity
+  - name: operations
+    description: Clients, applications, loans, and collections
 paths:
   /healthz:
     get:
@@ -24,6 +28,129 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /portfolio/overview:
+    get:
+      operationId: getPortfolioOverview
+      tags: [portfolio]
+      summary: Get portfolio overview
+      parameters:
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            default: manager
+      responses:
+        "200":
+          description: Portfolio overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioOverview"
+  /portfolio/activity:
+    get:
+      operationId: getPortfolioActivity
+      tags: [portfolio]
+      summary: Get recent portfolio activity
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+  /clients:
+    post:
+      operationId: createClient
+      tags: [operations]
+      summary: Create a client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientInput"
+      responses:
+        "201":
+          description: Created client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+  /applications:
+    post:
+      operationId: createApplication
+      tags: [operations]
+      summary: Create a loan application
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplicationInput"
+      responses:
+        "201":
+          description: Created application
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+  /applications/{id}/advance:
+    post:
+      operationId: advanceApplication
+      tags: [operations]
+      summary: Advance an application through review
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated application
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+  /loans/{id}/disburse:
+    post:
+      operationId: disburseLoan
+      tags: [operations]
+      summary: Disburse an approved loan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated loan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Loan"
+  /collections:
+    post:
+      operationId: recordCollection
+      tags: [operations]
+      summary: Record a field collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CollectionInput"
+      responses:
+        "201":
+          description: Recorded collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Collection"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +160,129 @@ components:
           type: string
       required:
         - status
+    PortfolioOverview:
+      type: object
+      required:
+        - metrics
+        - applications
+        - loans
+        - clients
+        - products
+      properties:
+        metrics:
+          $ref: "#/components/schemas/PortfolioMetrics"
+        applications:
+          type: array
+          items:
+            $ref: "#/components/schemas/Application"
+        loans:
+          type: array
+          items:
+            $ref: "#/components/schemas/Loan"
+        clients:
+          type: array
+          items:
+            $ref: "#/components/schemas/Client"
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+    PortfolioMetrics:
+      type: object
+      required:
+        - totalDisbursed
+        - outstandingPrincipal
+        - collectedThisMonth
+        - activeLoans
+        - atRisk
+        - repaymentRate
+      properties:
+        totalDisbursed: { type: number }
+        outstandingPrincipal: { type: number }
+        collectedThisMonth: { type: number }
+        activeLoans: { type: number }
+        atRisk: { type: number }
+        repaymentRate: { type: number }
+    Client:
+      type: object
+      required: [id, displayName, externalRef, location, createdAt]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        externalRef: { type: string }
+        location: { type: string }
+        createdAt: { type: string }
+    ClientInput:
+      type: object
+      required: [displayName, externalRef, location]
+      properties:
+        displayName: { type: string, minLength: 2 }
+        externalRef: { type: string, minLength: 2 }
+        location: { type: string, minLength: 2 }
+    Application:
+      type: object
+      required: [id, clientId, clientName, productName, requestedAmount, status, createdAt]
+      properties:
+        id: { type: string }
+        clientId: { type: string }
+        clientName: { type: string }
+        productName: { type: string }
+        requestedAmount: { type: number }
+        status: { type: string }
+        createdAt: { type: string }
+    ApplicationInput:
+      type: object
+      required: [clientId, productId, requestedAmount]
+      properties:
+        clientId: { type: string }
+        productId: { type: string }
+        requestedAmount: { type: number, minimum: 1 }
+    Loan:
+      type: object
+      required: [id, clientName, productName, principalAmount, outstandingPrincipal, status, dueDate]
+      properties:
+        id: { type: string }
+        clientName: { type: string }
+        productName: { type: string }
+        principalAmount: { type: number }
+        outstandingPrincipal: { type: number }
+        status: { type: string }
+        dueDate: { type: string }
+    Product:
+      type: object
+      required: [id, name, code, termWeeks, serviceCharge]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        code: { type: string }
+        termWeeks: { type: number }
+        serviceCharge: { type: number }
+    ActivityItem:
+      type: object
+      required: [id, type, title, detail, timestamp]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        title: { type: string }
+        detail: { type: string }
+        timestamp: { type: string }
+    Collection:
+      type: object
+      required: [id, clientName, amount, method, status, recordedAt]
+      properties:
+        id: { type: string }
+        clientName: { type: string }
+        amount: { type: number }
+        method: { type: string }
+        status: { type: string }
+        recordedAt: { type: string }
+    CollectionInput:
+      type: object
+      required: [loanId, amount, method]
+      properties:
+        loanId: { type: string }
+        amount: { type: number, minimum: 1 }
+        method:
+          type: string
+          enum: [cash, mobile_money]
 
