@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, onIdTokenChanged, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
 import type { UserRole } from '../../../shared/contracts.js';
+import { telemetry } from './telemetry.js';
 
 export type FirebaseClientMode = 'live' | 'mock';
 export interface FirebaseClientConfig { apiKey: string; authDomain: string; projectId: string; storageBucket: string; messagingSenderId: string; appId: string; }
@@ -67,6 +68,11 @@ export function subscribeToFirebaseAuth(onChange: (session: AuthSession | null) 
   if (!app) { onChange(null); return () => undefined; }
   return onIdTokenChanged(getAuth(app), (user) => {
     if (!user) { onChange(null); return; }
-    void user.getIdTokenResult().then((token) => onChange({ ...sessionFromUser(user), identity: identityFromClaims(user.uid, token.claims) })).catch(() => onChange({ ...sessionFromUser(user), identity: null }));
+    void user.getIdTokenResult()
+      .then((token) => onChange({ ...sessionFromUser(user), identity: identityFromClaims(user.uid, token.claims) }))
+      .catch((error) => {
+        telemetry.capture('auth.token_claims_failed', { reason: error instanceof Error ? error.message : 'UNKNOWN' });
+        onChange({ ...sessionFromUser(user), identity: null });
+      });
   });
 }

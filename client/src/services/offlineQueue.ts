@@ -60,7 +60,11 @@ export class OfflineQueue {
     if (!isBrowser()) return;
     await this.open();
     if (this.onlineHandler) return;
-    this.onlineHandler = () => { void this.processQueued(); };
+    this.onlineHandler = () => {
+      void this.processQueued().catch((error) => {
+        telemetry.capture('queue.sync_loop_failed', { reason: error instanceof Error ? error.message : 'SYNC_LOOP_FAILED' });
+      });
+    };
     window.addEventListener('online', this.onlineHandler);
     if (navigator.onLine) await this.processQueued();
   }

@@ -1,6 +1,7 @@
 import { buildApp } from './app.js';
 import { runReconciliationCycle } from './jobs/reconciliationCron.js';
 import { getServerPort, validateRuntimeConfig } from './config.js';
+import { pool } from './db.js';
 
 validateRuntimeConfig();
 const app = buildApp();
@@ -35,7 +36,13 @@ if (schedulerEnabled && schedulerActorUserId && Number.isInteger(schedulerInterv
 
 const shutdown = async () => {
   if (schedulerTimer) clearInterval(schedulerTimer);
-  await app.close();
+  await Promise.all([app.close(), pool.end()]);
 };
-process.once('SIGTERM', () => void shutdown());
-process.once('SIGINT', () => void shutdown());
+const handleShutdown = () => {
+  void shutdown().catch((error) => {
+    app.log.error({ err: error }, 'graceful shutdown failed');
+    process.exitCode = 1;
+  });
+};
+process.once('SIGTERM', handleShutdown);
+process.once('SIGINT', handleShutdown);

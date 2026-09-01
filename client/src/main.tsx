@@ -7,6 +7,7 @@ import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
 import { OfflineQueue, createPaymentSync } from './services/offlineQueue.js';
 import { getCollectionQueue, getHealth, getReconciliationQueue, getSession, type CollectionRecordResult, type ReconciliationQueueBatch } from './services/api.js';
 import { getFirebaseIdToken, signOutFirebase, subscribeToFirebaseAuth, type AuthIdentity, type AuthSession } from './services/firebase.js';
+import { telemetry } from './services/telemetry.js';
 import type { FieldCollectionRecord, QueueMetrics, QueueSnapshot } from './types/field-ops.js';
 import { PortalDashboard } from './components/portals/PortalDashboard.js';
 import { CollectorReportingDashboard } from './components/portals/CollectorReportingDashboard.js';
@@ -124,7 +125,9 @@ function App() {
 
   useEffect(() => {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
-    void navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined);
+    void navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((error) => {
+      telemetry.capture('pwa.service_worker_registration_failed', { reason: error instanceof Error ? error.message : 'SERVICE_WORKER_REGISTRATION_FAILED' });
+    });
   }, []);
 
   useEffect(() => {
