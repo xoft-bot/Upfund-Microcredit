@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: upfund-microcredit-api
+    runtime: node
+    buildCommand: corepack enable && corepack prepare pnpm@10.26.1 --activate && pnpm install --frozen-lockfile --prod=false && pnpm run build:server
+    startCommand: pnpm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: production
+      - key: FIREBASE_MODE
+        value: live
+      - key: DATABASE_POOLER_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: PGURI
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ADMIN_FIREBASE_UID
+        sync: false

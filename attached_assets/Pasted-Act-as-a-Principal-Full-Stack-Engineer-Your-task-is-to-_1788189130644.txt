@@ -1,0 +1,36 @@
+Act as a Principal Full-Stack Engineer. Your task is to audit, complete, and link our EXISTING backend server (`server/`) and database structure to support our microcredit platform before we address any UI/UX or frontend code.
+
+Do NOT create a new project from scratch. Refactor and extend the existing codebase following these 4 steps sequentially:
+
+---
+
+### Step 1: Fix Flutterwave & Environment Guardrails in Existing Server
+- Locate the existing environment configuration and secret verification code (in `server/src/app.ts` or `server/src/config.ts`).
+- Update the startup logic so `FLUTTERWAVE_SECRET_HASH` does not throw an error or block application startup in development mode.
+- If `FLUTTERWAVE_SECRET_HASH` is undefined or empty, log a warning and fall back to a mock development string (e.g., `"dev_secret_hash_placeholder"`).
+
+---
+
+### Step 2: Complete & Verify Existing Database Migrations
+- Review current database scripts (e.g., `server/src/db/check-schema.ts`) and ensure Supabase/PostgreSQL schema definitions cover:
+  1. `borrowers` (id, firebase_uid, full_name, phone_number, status, created_at)
+  2. `loans` (id, borrower_id, principal_amount, interest_rate, term_months, status, balance_remaining, created_at)
+  3. `repayments` (id, loan_id, amount_paid, payment_method, flutterwave_ref, status, created_at)
+  4. `audit_logs` (id, actor_id, action, target_resource, metadata, timestamp)
+- Ensure foreign keys and constraints preventing negative balances or invalid state transitions are in place.
+
+---
+
+### Step 3: Wire & Update Existing API Routes
+- Audit existing endpoints in `server/src/routes/` (such as `payments.ts`, `reconciliations.ts`, and `collectionQueries.ts`) and ensure the following are fully wired to Supabase:
+  - `POST /api/loans/apply`: Validates eligibility and records pending loan applications.
+  - `POST /api/payments/webhook`: Handles Flutterwave payment webhooks, verifies signatures against `FLUTTERWAVE_SECRET_HASH` (or dev fallback), atomically records payments, updates loan balances, and writes to `audit_logs`.
+  - `GET /api/loans/:id/schedule`: Calculates and returns loan repayment schedules.
+
+---
+
+### Step 4: Auth Middleware & Integration Verification
+- Confirm that existing auth middleware (`server/src/middleware/auth.ts`) extracts `Authorization: Bearer <token>`, decodes the Firebase JWT, and verifies the user ID (`uid`).
+- Run `npm run build` or test scripts (e.g., `tests/stage1.test.ts`) to ensure the server starts without syntax or configuration errors.
+
+Please begin with Step 1 and proceed through Step 4. Output a summary of changes made to the existing files once complete.

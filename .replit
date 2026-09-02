@@ -1,20 +1,75 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-20", "python-3.12", "web", "postgresql-16"]
 
-[deployment]
-router = "application"
-deploymentTarget = "autoscale"
+[nix]
+channel = "stable-25_05"
+packages = ["firebase-tools"]
 
-[deployment.postBuild]
-args = ["pnpm", "store", "prune"]
-env = { "CI" = "true" }
+[agent]
+expertMode = true
 
 [workflows]
 runButton = "Project"
 
-[agent]
-stack = "PNPM_WORKSPACE"
-expertMode = true
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
 
-[postMerge]
-path = "scripts/post-merge.sh"
-timeoutMs = 20000
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 3000
+externalPort = 3000
+
+[[ports]]
+localPort = 3102
+externalPort = 3002
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 23636
+externalPort = 3001
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["npm", "run", "start"]
+build = ["npm", "run", "build"]
+
+[userenv]
+
+[userenv.shared]
+FIREBASE_MODE = "live"
+FIREBASE_PROJECT_ID = "upfund-microcredit"
+VITE_FIREBASE_API_KEY = "AIzaSyDksXzDvv76eqrhqF88JqkQqDqBP2T30xw"
+VITE_FIREBASE_APP_ID = "1:921982279239:web:b62757657e9eebc969db62"
+VITE_FIREBASE_AUTH_DOMAIN = "upfund-microcredit.firebaseapp.com"
+VITE_FIREBASE_MESSAGING_SENDER_ID = "921982279239"
+VITE_FIREBASE_MODE = "live"
+VITE_FIREBASE_PROJECT_ID = "upfund-microcredit"
+VITE_FIREBASE_STORAGE_BUCKET = "upfund-microcredit.firebasestorage.app"
+CORS_ORIGINS = "https://upfund-microcredit.web.app,https://upfund-microcredit.firebaseapp.com"
