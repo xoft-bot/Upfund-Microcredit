@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Actor } from '../../../shared/contracts.js';
 import { insertAuditEvent, pool, withTransaction, type DbClient } from '../db.js';
 import { assertApplicationTransition, assertKycTransition, assertLoanTransition, type ApplicationStatus, type KycStatus, type LoanStatus } from './state-machines.js';
+import { postLedgerTransactionOnClient } from './ledger.js';
 
 export class LifecycleError extends Error {
   constructor(readonly code: string, message: string, readonly statusCode = 400) {
@@ -463,16 +464,29 @@ export async function decideApplication(actor: Actor, applicationId: string, inp
 export async function disburseLoan(actor: Actor, loanId: string, input: { disbursementReference: string; idempotencyKey: string }): Promise<{ loanId: string; status: string; disbursementReference: string; amount: number; created: boolean }> {
   if (!input.disbursementReference.trim() || input.idempotencyKey.trim().length < 8) fail('DISBURSEMENT_FIELDS_REQUIRED', 'Disbursement reference and idempotency key are required');
   return withTransaction(async (client) => {
-    const existing = await client.query<{ loan_id: string; disbursement_reference: string; amount: string }>('SELECT loan_id, disbursement_reference, amount FROM loan_disbursements WHERE idempotency_key = $1', [input.idempotencyKey]);
-    if (existing.rowCount) {
-      return { loanId: existing.rows[0].loan_id, status: 'disbursed', disbursementReference: existing.rows[0].disbursement_reference, amount: toNumber(existing.rows[0].amount), created: false };
-    }
     const loan = await findLoan(client, loanId, true);
     assertBranchScope(actor, loan.branch_id);
+    const existing = await client.query<{ loan_id: string; disbursement_reference: string; amount: string }>('SELECT loan_id, disbursement_reference, amount FROM loan_disbursements WHERE idempotency_key = $1', [input.idempotencyKey]);
+    if (existing.rowCount) {
+      if (existing.rows[0].loan_id !== loanId) fail('IDEMPOTENCY_KEY_REUSED', 'The disbursement idempotency key is already assigned to another loan', 409);
+      return { loanId: existing.rows[0].loan_id, status: 'disbursed', disbursementReference: existing.rows[0].disbursement_reference, amount: toNumber(existing.rows[0].amount), created: false };
+    }
     assertLoanTransition(loan.status, 'disbursed');
     await client.query(`UPDATE loans SET status = 'disbursed', version = version + 1 WHERE id = $1`, [loanId]);
     await client.query(`INSERT INTO loan_disbursements (loan_id, disbursement_reference, idempotency_key, amount, posted_by) VALUES ($1, $2, $3, $4, $5)`, [loanId, input.disbursementReference.trim(), input.idempotencyKey.trim(), loan.principal_amount, actor.userId]);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.disbursed', entityType: 'loan', entityId: loanId, correlationId: randomUUID(), metadata: { disbursementReference: input.disbursementReference.trim() } });
+    const ledger = await postLedgerTransactionOnClient(client, {
+      actorUserId: actor.userId,
+      sourceType: 'loan_disbursement',
+      sourceId: loanId,
+      idempotencyKey: `disbursement-ledger:${input.idempotencyKey.trim()}`,
+      correlationId: randomUUID(),
+      description: 'Loan disbursement',
+      lines: [
+        { accountCode: 'loan.receivable', side: 'debit', amount: toNumber(loan.principal_amount) },
+        { accountCode: 'cash.disbursement', side: 'credit', amount: toNumber(loan.principal_amount) },
+      ],
+    });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.disbursed', entityType: 'loan', entityId: loanId, correlationId: randomUUID(), metadata: { disbursementReference: input.disbursementReference.trim(), ledgerTransactionId: ledger.transactionId } });
     return { loanId, status: 'disbursed', disbursementReference: input.disbursementReference.trim(), amount: toNumber(loan.principal_amount), created: true };
   });
 }
