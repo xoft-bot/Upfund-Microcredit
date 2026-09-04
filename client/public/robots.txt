@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /
+
+# The authenticated SPA is private. Publish a separate public landing site before allowing crawling.
+Sitemap: https://upfund-microcredit.web.app/sitemap.xml
