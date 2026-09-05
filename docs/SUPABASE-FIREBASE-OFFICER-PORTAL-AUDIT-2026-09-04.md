@@ -192,7 +192,7 @@ Field collection records begin as `pending_reconciliation`. Reporting distinguis
 ### P0 security and accounting fixes
 
 1. Add integration tests for cross-branch disbursement replay, repeated same-branch disbursement, mismatched loan ID/idempotency key, and disbursement ledger balance.
-2. Run all database-backed tests against a disposable PostgreSQL instance with migrations `001` through `013`.
+2. **Completed certification:** a temporary PostgreSQL 16 database was created, migrations `001` through `013` were applied, all 25 required custom tables were verified, and the complete suite passed: **17 test files, 80 tests**.
 
 ### P1 officer workflow fixes
 
@@ -212,7 +212,7 @@ Field collection records begin as `pending_reconciliation`. Reporting distinguis
 
 The Firebase-to-API authentication boundary and Supabase/PostgreSQL financial architecture are fundamentally sound, and the payment collection path is substantially tracked from offline capture through receipt, ledger, field source, reconciliation, and audit. The officer portal is visually coherent and supports client/application initiation.
 
-The current officer workflow should not yet be treated as a production underwriting workflow because the UI hardcodes risk decisions and exposes unauthorized state-transition buttons. The most urgent backend fix is the disbursement idempotency replay authorization gap, followed by adding a ledger entry for disbursement if disbursements are part of the financial accounting model. The most urgent UX fix is to align visible officer actions with the server permission matrix and provide lifecycle timelines instead of relying on a reload and transient notices.
+The disbursement replay authorization gap, disbursement ledger posting, unauthorized generic portal actions, and hardcoded underwriting actions identified in the original review have been fixed and pushed in commit `e9005a0`. The repository has also passed a real PostgreSQL certification run. The remaining production-readiness work is now primarily controlled KYC/risk forms, lifecycle and loan-detail visibility, assigned-loan collection selection, CI/staging certification, and operational telemetry. These are prioritized in `docs/NEXT-SPRINT-BACKLOG-2026-09-04.md`.
 
 ## References
 
