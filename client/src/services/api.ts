@@ -56,6 +56,7 @@ export interface ReconciliationQueueBatch { id: string; batchReference: string; 
 export interface HealthResult { service: string; database: string; }
 export interface SessionProfile { userId: string; firebaseUid: string; role: string; branchId: string | null; clientId: string | null; permissions: string[]; }
 export interface PortalApplication { id: string; clientId: string; clientName: string; productName: string; branchId: string; requestedAmount: number; status: string; createdAt: string; submittedAt: string | null; }
+export interface ApplicationTimelineEntry { id: string; fromState: string | null; toState: string; actorUserId: string | null; reason: string | null; createdAt: string; }
 export interface PortalLoan { id: string; clientId: string; clientName: string; branchId: string; principalAmount: number; outstandingPrincipal: number; status: string; createdAt: string; }
 export interface PortalClient { id: string; externalRef: string; displayName: string; branchId: string; createdAt: string; }
 export interface PortalProduct { id: string; code: string; name: string; currency: string; active: boolean; }
@@ -149,11 +150,14 @@ export function createLoanApplication(command: CreateApplicationCommand, token: 
 export function submitLoanApplication(id: string, token: string): Promise<{ id: string; status: string }> {
   return request<{ id: string; status: string }>(`/api/v1/loan-applications/${id}/submit`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
 }
-export function reviewApplicationKyc(id: string, command: { status: 'verified' | 'rejected'; verificationMethod: string; reason?: string }, token: string): Promise<{ id: string; applicationStatus: string; kycStatus: string }> {
+export function reviewApplicationKyc(id: string, command: { status: 'verified' | 'rejected'; verificationMethod: string; evidenceNotes: string }, token: string): Promise<{ id: string; applicationStatus: string; kycStatus: string }> {
   return request<{ id: string; applicationStatus: string; kycStatus: string }>(`/api/v1/loan-applications/${id}/kyc`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
 }
-export function assessApplicationRisk(id: string, command: { score: number; riskGrade: string; status: 'approved' | 'declined'; policyVersion: string }, token: string): Promise<{ id: string; applicationStatus: string; riskStatus: string }> {
+export function assessApplicationRisk(id: string, command: { score: number; riskGrade: string; status: 'approved' | 'declined'; policyVersion: string; rationale: string }, token: string): Promise<{ id: string; applicationStatus: string; riskStatus: string }> {
   return request<{ id: string; applicationStatus: string; riskStatus: string }>(`/api/v1/loan-applications/${id}/risk`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
+}
+export function getApplicationTimeline(id: string, token: string): Promise<ApplicationTimelineEntry[]> {
+  return request<ApplicationTimelineEntry[]>(`/api/v1/loan-applications/${id}/timeline`, { headers: { authorization: `Bearer ${token}` } });
 }
 export function decideApplication(id: string, command: { decision: 'approve' | 'reject'; reason: string }, token: string): Promise<{ id: string; status: string; loanId?: string }> {
   return request<{ id: string; status: string; loanId?: string }>(`/api/v1/loan-applications/${id}/decision`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });

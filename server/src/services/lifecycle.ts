@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { Pool } from 'pg';
 import type { Actor } from '../../../shared/contracts.js';
 import { insertAuditEvent, pool, withTransaction, type DbClient } from '../db.js';
 import { assertApplicationTransition, assertKycTransition, assertLoanTransition, type ApplicationStatus, type KycStatus, type LoanStatus } from './state-machines.js';
@@ -29,6 +30,7 @@ export interface PortalApplication {
   createdAt: string;
   submittedAt: string | null;
 }
+export interface ApplicationTimelineEntry { id: string; fromState: string | null; toState: string; actorUserId: string | null; reason: string | null; createdAt: string; }
 
 export interface PortalLoan {
   id: string;
@@ -121,7 +123,7 @@ function assertClientScope(actor: Actor, clientId: string): void {
   if (actor.role === 'client' && actor.clientId !== clientId) fail('CLIENT_SCOPE_DENIED', 'Client scope denied', 403);
 }
 
-async function findApplication(client: DbClient, applicationId: string, forUpdate = false) {
+async function findApplication(client: DbClient | Pool, applicationId: string, forUpdate = false) {
   const suffix = forUpdate ? ' FOR UPDATE' : '';
   const result = await client.query<{
     id: string;
@@ -161,6 +163,12 @@ async function findLoan(client: DbClient, loanId: string, forUpdate = false) {
   );
   if (!result.rowCount) fail('LOAN_NOT_FOUND', 'Loan not found', 404);
   return result.rows[0];
+}
+async function recordApplicationTransition(client: DbClient, applicationId: string, fromState: string | null, toState: string, actorUserId: string, reason?: string): Promise<void> {
+  await client.query(
+    `INSERT INTO application_transition_history (application_id, from_state, to_state, actor_user_id, reason) VALUES ($1, $2, $3, $4, $5)`,
+    [applicationId, fromState, toState, actorUserId, reason?.trim() || null],
+  );
 }
 
 export async function getPortalOverview(actor: Actor): Promise<PortalOverview> {
@@ -296,6 +304,7 @@ export async function createLoanApplication(actor: Actor, input: { clientId: str
        RETURNING id, created_at`,
       [input.clientId, input.productId, branchId, input.requestedAmount, actor.userId],
     );
+    await recordApplicationTransition(client, result.rows[0].id, null, 'draft', actor.userId);
     await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.application.created', entityType: 'loan_application', entityId: result.rows[0].id, correlationId: randomUUID(), metadata: { branchId, clientId: input.clientId } });
     return {
       id: result.rows[0].id,
@@ -394,12 +403,14 @@ export async function submitLoanApplication(actor: Actor, applicationId: string)
     assertBranchScope(actor, application.branch_id);
     assertApplicationTransition(application.status, 'submitted');
     await client.query(`UPDATE loan_applications SET status = 'submitted', submitted_at = now() WHERE id = $1`, [applicationId]);
+    await recordApplicationTransition(client, applicationId, application.status, 'submitted', actor.userId);
     await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.application.submitted', entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID() });
     return { id: applicationId, status: 'submitted' };
   });
 }
 
-export async function reviewKyc(actor: Actor, applicationId: string, input: { status: Exclude<KycStatus, 'pending'>; verificationMethod: string; reason?: string }): Promise<{ id: string; applicationStatus: string; kycStatus: string }> {
+export async function reviewKyc(actor: Actor, applicationId: string, input: { status: Exclude<KycStatus, 'pending'>; verificationMethod: string; evidenceNotes: string }): Promise<{ id: string; applicationStatus: string; kycStatus: string }> {
+  if (!input.verificationMethod.trim() || !input.evidenceNotes.trim()) fail('KYC_EVIDENCE_REQUIRED', 'Verification method and evidence notes are required');
   return withTransaction(async (client) => {
     const application = await findApplication(client, applicationId, true);
     assertBranchScope(actor, application.branch_id);
@@ -409,31 +420,33 @@ export async function reviewKyc(actor: Actor, applicationId: string, input: { st
     const nextApplicationStatus: ApplicationStatus = input.status === 'verified' ? 'kyc_verified' : 'rejected';
     assertApplicationTransition(application.status, nextApplicationStatus);
     if (existing.rowCount) {
-      await client.query(`UPDATE kyc_records SET status = $1, verification_method = $2, reviewed_by = $3, reviewed_at = now(), reason = $4 WHERE id = $5`, [input.status, input.verificationMethod, actor.userId, input.reason ?? null, existing.rows[0].id]);
+      await client.query(`UPDATE kyc_records SET status = $1, verification_method = $2, reviewed_by = $3, reviewed_at = now(), reason = $4, evidence_notes = $5 WHERE id = $6`, [input.status, input.verificationMethod.trim(), actor.userId, input.evidenceNotes.trim(), input.evidenceNotes.trim(), existing.rows[0].id]);
     } else {
-      await client.query(`INSERT INTO kyc_records (client_id, status, verification_method, reviewed_by, reviewed_at, reason) VALUES ($1, $2, $3, $4, now(), $5)`, [application.client_id, input.status, input.verificationMethod, actor.userId, input.reason ?? null]);
+      await client.query(`INSERT INTO kyc_records (client_id, status, verification_method, reviewed_by, reviewed_at, reason, evidence_notes) VALUES ($1, $2, $3, $4, now(), $5, $6)`, [application.client_id, input.status, input.verificationMethod.trim(), actor.userId, input.evidenceNotes.trim(), input.evidenceNotes.trim()]);
     }
     await client.query(`UPDATE loan_applications SET status = $1 WHERE id = $2`, [nextApplicationStatus, applicationId]);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: `client.kyc.${input.status}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { reason: input.reason ?? null } });
+    await recordApplicationTransition(client, applicationId, application.status, nextApplicationStatus, actor.userId, input.evidenceNotes);
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: `client.kyc.${input.status}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { verificationMethod: input.verificationMethod.trim(), evidenceNotes: input.evidenceNotes.trim() } });
     return { id: applicationId, applicationStatus: nextApplicationStatus, kycStatus: input.status };
   });
 }
 
-export async function assessApplicationRisk(actor: Actor, applicationId: string, input: { score: number; riskGrade: string; status: 'approved' | 'declined'; policyVersion: string }): Promise<{ id: string; applicationStatus: string; riskStatus: string }> {
+export async function assessApplicationRisk(actor: Actor, applicationId: string, input: { score: number; riskGrade: string; status: 'approved' | 'declined'; policyVersion: string; rationale: string }): Promise<{ id: string; applicationStatus: string; riskStatus: string }> {
   if (!Number.isInteger(input.score) || input.score < 0 || input.score > 100) fail('INVALID_RISK_SCORE', 'Risk score must be between 0 and 100');
-  if (!input.policyVersion.trim() || !input.riskGrade.trim()) fail('RISK_FIELDS_REQUIRED', 'Risk grade and policy version are required');
+  if (!input.policyVersion.trim() || !input.riskGrade.trim() || !input.rationale.trim()) fail('RISK_FIELDS_REQUIRED', 'Risk grade, policy version, and rationale are required');
   return withTransaction(async (client) => {
     const application = await findApplication(client, applicationId, true);
     assertBranchScope(actor, application.branch_id);
     const nextApplicationStatus: ApplicationStatus = input.status === 'approved' ? 'risk_assessed' : 'rejected';
     assertApplicationTransition(application.status, nextApplicationStatus);
     await client.query(
-      `INSERT INTO risk_assessments (application_id, score, risk_grade, status, policy_version, assessed_by)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [applicationId, input.score, input.riskGrade.trim(), input.status, input.policyVersion.trim(), actor.userId],
+      `INSERT INTO risk_assessments (application_id, score, risk_grade, status, policy_version, assessed_by, rationale, assessed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+      [applicationId, input.score, input.riskGrade.trim(), input.status, input.policyVersion.trim(), actor.userId, input.rationale.trim()],
     );
     await client.query(`UPDATE loan_applications SET status = $1, risk_assessment_id = (SELECT id FROM risk_assessments WHERE application_id = $2) WHERE id = $2`, [nextApplicationStatus, applicationId]);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.risk.${input.status}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { score: input.score, riskGrade: input.riskGrade, policyVersion: input.policyVersion } });
+    await recordApplicationTransition(client, applicationId, application.status, nextApplicationStatus, actor.userId, input.rationale);
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.risk.${input.status}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { score: input.score, riskGrade: input.riskGrade, policyVersion: input.policyVersion, rationale: input.rationale.trim() } });
     return { id: applicationId, applicationStatus: nextApplicationStatus, riskStatus: input.status };
   });
 }
@@ -445,6 +458,10 @@ export async function decideApplication(actor: Actor, applicationId: string, inp
     assertBranchScope(actor, application.branch_id);
     const nextStatus: ApplicationStatus = input.decision === 'approve' ? 'approved' : 'rejected';
     assertApplicationTransition(application.status, nextStatus);
+    if (input.decision === 'approve') {
+      const assessment = await client.query(`SELECT id FROM risk_assessments WHERE application_id = $1 AND status = 'approved' AND rationale IS NOT NULL`, [applicationId]);
+      if (!assessment.rowCount) fail('RISK_ASSESSMENT_REQUIRED', 'An approved risk assessment is required before approval');
+    }
     await client.query(`UPDATE loan_applications SET status = $1, approved_by = $2, approved_at = now() WHERE id = $3`, [nextStatus, actor.userId, applicationId]);
     let loanId: string | undefined;
     if (input.decision === 'approve') {
@@ -456,9 +473,21 @@ export async function decideApplication(actor: Actor, applicationId: string, inp
       loanId = loan.rows[0].id;
       await client.query(`INSERT INTO repayment_schedules (loan_id, due_on, principal_due, charge_due) VALUES ($1, current_date + 30, $2, 0)`, [loanId, application.requested_amount]);
     }
+    await recordApplicationTransition(client, applicationId, application.status, nextStatus, actor.userId, input.reason);
     await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.${input.decision === 'approve' ? 'approved' : 'rejected'}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { reason: input.reason.trim(), loanId } });
     return { id: applicationId, status: nextStatus, loanId };
   });
+}
+
+export async function getApplicationTimeline(actor: Actor, applicationId: string): Promise<ApplicationTimelineEntry[]> {
+  const application = await findApplication(pool, applicationId);
+  assertClientScope(actor, application.client_id);
+  assertBranchScope(actor, application.branch_id);
+  const result = await pool.query<{ id: string; from_state: string | null; to_state: string; actor_user_id: string | null; reason: string | null; created_at: Date }>(
+    `SELECT id, from_state, to_state, actor_user_id, reason, created_at FROM application_transition_history WHERE application_id = $1 ORDER BY created_at ASC, id ASC`,
+    [applicationId],
+  );
+  return result.rows.map((row) => ({ id: row.id, fromState: row.from_state, toState: row.to_state, actorUserId: row.actor_user_id, reason: row.reason, createdAt: toIso(row.created_at) }));
 }
 
 export async function disburseLoan(actor: Actor, loanId: string, input: { disbursementReference: string; idempotencyKey: string }): Promise<{ loanId: string; status: string; disbursementReference: string; amount: number; created: boolean }> {
