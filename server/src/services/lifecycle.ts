@@ -515,6 +515,7 @@ export async function disburseLoan(actor: Actor, loanId: string, input: { disbur
         { accountCode: 'cash.disbursement', side: 'credit', amount: toNumber(loan.principal_amount) },
       ],
     });
+    await recordApplicationTransition(client, loan.application_id, 'approved', 'disbursed', actor.userId, input.disbursementReference.trim());
     await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.disbursed', entityType: 'loan', entityId: loanId, correlationId: randomUUID(), metadata: { disbursementReference: input.disbursementReference.trim(), ledgerTransactionId: ledger.transactionId } });
     return { loanId, status: 'disbursed', disbursementReference: input.disbursementReference.trim(), amount: toNumber(loan.principal_amount), created: true };
   });
