@@ -3,6 +3,7 @@ import { SYSTEM_VERSION } from '../../../shared/version.js';
 import { authMiddleware, type TokenVerifier, type UserResolver } from '../middleware/auth.js';
 import { requireBranchScope, requireRoles } from '../middleware/authorization.js';
 import { listFieldCollections } from '../services/collection-queries.js';
+import { listAssignedLoans } from '../services/collector-reporting.js';
 
 interface CollectionQuery { branchId?: string; collectorId?: string; limit?: string; }
 
@@ -24,5 +25,14 @@ export function registerCollectionQueryRoutes(app: FastifyInstance, verifier?: T
     const collectorId = actor.role === 'collector' ? actor.dbUserId : request.query.collectorId;
     const records = await listFieldCollections({ branchId, collectorId, limit: Math.min(Number(request.query.limit ?? 100), 100) });
     return { ok: true, data: { records }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+  });
+  app.get('/api/v1/collections/assigned-loans', {
+    preHandler: [authMiddleware(verifier, resolveUser), requireRoles(['admin', 'manager', 'officer', 'collector']), requireBranchScope((request) => request.actor?.branchId ?? undefined)],
+  }, async (request, reply) => {
+    const actor = request.actor!;
+    if (!actor.branchId) return reply.code(400).send({ ok: false, error: { code: 'BRANCH_REQUIRED', message: 'A branch is required for assigned-loan queries' }, version: SYSTEM_VERSION });
+    if (!['officer', 'collector'].includes(actor.role)) return reply.code(403).send({ ok: false, error: { code: 'COLLECTOR_SCOPE_DENIED', message: 'Assigned loans are available only to field officers and collectors' }, version: SYSTEM_VERSION });
+    const loans = await listAssignedLoans({ branchId: actor.branchId, officerId: actor.dbUserId });
+    return { ok: true, data: { loans }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
 }

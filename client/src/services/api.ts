@@ -51,6 +51,7 @@ export interface CollectionRecordResult {
   createdAt: string;
   syncedAt: string | null;
 }
+export interface AssignedLoanOption { loanId: string; clientId: string; clientName: string; outstandingPrincipal: number; routeCode: string; }
 export interface ReconciliationQueuePayment { paymentId: string; clientId: string | null; amount: number; receiptReference: string | null; status: string; principalAmount: number; penaltyAmount: number; interestAmount: number; overpaymentAmount: number; }
 export interface ReconciliationQueueBatch { id: string; batchReference: string; branchId: string; collectionDate: string; expectedAmount: number; recordedAmount: number; submittedAmount: number; variance: number; status: string; decisionReason: string | null; reviewedAt: string | null; submittedBy: string; submittedByName: string | null; payments: ReconciliationQueuePayment[]; }
 export interface HealthResult { service: string; database: string; }
@@ -107,6 +108,9 @@ export function getCollectionQueue(token: string, options: { branchId?: string; 
   if (options.branchId) params.set('branchId', options.branchId);
   if (options.collectorId) params.set('collectorId', options.collectorId);
   return request<{ records: CollectionRecordResult[] }>(`/api/v1/collections/queue${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } }, options.apiBaseUrl);
+}
+export function getAssignedLoans(token: string): Promise<{ loans: AssignedLoanOption[] }> {
+  return request<{ loans: AssignedLoanOption[] }>('/api/v1/collections/assigned-loans', { headers: { authorization: `Bearer ${token}` } });
 }
 export function getReconciliationQueue(token: string, options: { branchId?: string; apiBaseUrl?: string } = {}): Promise<{ batches: ReconciliationQueueBatch[] }> {
   const params = new URLSearchParams();

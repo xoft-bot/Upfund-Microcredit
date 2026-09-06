@@ -312,3 +312,21 @@ export async function getCollectorReportingSnapshot(input: CollectorReportingQue
     offlineQueue,
   };
 }
+
+export interface AssignedLoanOption { loanId: string; clientId: string; clientName: string; outstandingPrincipal: number; routeCode: string; }
+export async function listAssignedLoans(input: { branchId: string; officerId: string }): Promise<AssignedLoanOption[]> {
+  const result = await pool.query<{ loan_id: string; client_id: string; client_name: string; outstanding_principal: string; route_code: string }>(
+    `SELECT l.id AS loan_id, c.id AS client_id, c.display_name AS client_name,
+            l.outstanding_principal, ca.route_code
+       FROM collector_assignments ca
+       JOIN clients c ON c.id = ca.client_id
+       JOIN loans l ON l.client_id = c.id AND l.branch_id = ca.branch_id
+      WHERE ca.branch_id = $1 AND ca.officer_id = $2
+        AND ca.effective_from <= CURRENT_DATE
+        AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE)
+        AND l.status IN ('approved', 'active', 'overdue')
+      ORDER BY c.display_name, l.id`,
+    [input.branchId, input.officerId],
+  );
+  return result.rows.map((row) => ({ loanId: row.loan_id, clientId: row.client_id, clientName: row.client_name, outstandingPrincipal: toNumber(row.outstanding_principal), routeCode: row.route_code }));
+}

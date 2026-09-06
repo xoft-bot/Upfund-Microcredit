@@ -5,7 +5,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary.js';
 import { CollectorRouteView } from './components/field/CollectorRouteView.js';
 import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
 import { OfflineQueue, createPaymentSync } from './services/offlineQueue.js';
-import { getCollectionQueue, getHealth, getReconciliationQueue, getSession, type CollectionRecordResult, type ReconciliationQueueBatch } from './services/api.js';
+import { getAssignedLoans, getCollectionQueue, getHealth, getReconciliationQueue, getSession, type AssignedLoanOption, type CollectionRecordResult, type ReconciliationQueueBatch } from './services/api.js';
 import { getFirebaseIdToken, signOutFirebase, subscribeToFirebaseAuth, type AuthIdentity, type AuthSession } from './services/firebase.js';
 import { telemetry } from './services/telemetry.js';
 import type { FieldCollectionRecord, QueueMetrics, QueueSnapshot } from './types/field-ops.js';
@@ -70,6 +70,7 @@ function App() {
   const [identityError, setIdentityError] = useState('');
   const [serverRecords, setServerRecords] = useState<FieldCollectionRecord[]>([]);
   const [reconciliationBatches, setReconciliationBatches] = useState<ReconciliationQueueBatch[]>([]);
+  const [assignedLoans, setAssignedLoans] = useState<AssignedLoanOption[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -96,7 +97,7 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (!session) { setIdentity(null); setIdentityError(''); setServerRecords([]); setReconciliationBatches([]); return () => { active = false; }; }
+    if (!session) { setIdentity(null); setIdentityError(''); setServerRecords([]); setReconciliationBatches([]); setAssignedLoans([]); return () => { active = false; }; }
     setIdentityLoading(true);
     void (async () => {
       try {
@@ -110,12 +111,16 @@ function App() {
         await queue.retry();
         const collections = await getCollectionQueue(token);
         if (active) setServerRecords(collections.records.map(serverRecordToFieldRecord));
+        if (['collector', 'officer'].includes(nextIdentity.role)) {
+          const assigned = await getAssignedLoans(token);
+          if (active) setAssignedLoans(assigned.loans);
+        } else if (active) setAssignedLoans([]);
         if (['admin', 'manager'].includes(nextIdentity.role)) {
           const reconciliations = await getReconciliationQueue(token);
           if (active) setReconciliationBatches(reconciliations.batches);
         } else if (active) setReconciliationBatches([]);
       } catch (error) {
-        if (active) { setIdentity(null); setIdentityError(error instanceof Error && error.message === 'USER_NOT_FOUND' ? 'Your Firebase account is not mapped to an active Upfund account.' : 'Could not load your authorized workspace. Check your connection and try again.'); setServerRecords([]); setReconciliationBatches([]); }
+        if (active) { setIdentity(null); setIdentityError(error instanceof Error && error.message === 'USER_NOT_FOUND' ? 'Your Firebase account is not mapped to an active Upfund account.' : 'Could not load your authorized workspace. Check your connection and try again.'); setServerRecords([]); setReconciliationBatches([]); setAssignedLoans([]); }
       } finally {
         if (active) setIdentityLoading(false);
       }
@@ -147,7 +152,7 @@ function App() {
 
   const addRecord = (record: FieldCollectionRecord) => { setRecords((current) => [...current.filter((item) => item.localId !== record.localId), record]); setLastRecord(record); };
   const metrics = queueSnapshot.metrics ?? emptyMetrics;
-  const collectorContextReady = identity?.role === 'collector' && Boolean(identity.branchId);
+  const collectorContextReady = Boolean(identity && ['collector', 'officer'].includes(identity.role) && identity.branchId);
   const managerContext = identity && ['admin', 'manager', 'accountant'].includes(identity.role) ? identity : null;
   const portalContext = identity && ['admin', 'manager', 'officer', 'client', 'marketing'].includes(identity.role);
   const routeName = identity?.branchName ? `${identity.branchName} route` : 'Assigned collection route';
@@ -179,11 +184,11 @@ function App() {
             <CollectorReportingDashboard identity={identity} />
             <CollectorRouteView queue={queue} routeName={routeName} records={displayedRecords} metrics={metrics} queueReady={queueReady} queueError={queueError} onCollect={() => document.getElementById('collection-form')?.scrollIntoView({ behavior: 'smooth' })} />
             <div id="collection-form">
-              <FieldCollectionForm queue={queue} collectorId={identity.collectorId} branchId={identity.branchId!} deviceId={getDeviceId()} onQueued={addRecord} disabled={!queueReady || Boolean(queueError)} />
+              <FieldCollectionForm queue={queue} collectorId={identity.collectorId} branchId={identity.branchId!} deviceId={getDeviceId()} assignedLoans={assignedLoans} onQueued={addRecord} disabled={!queueReady || Boolean(queueError)} />
             </div>
             {lastRecord && <Suspense fallback={<p className="empty-state">Loading receipt…</p>}><LazyReceiptPreview clientId={lastRecord.clientId} loanId={lastRecord.loanId} amount={lastRecord.amount} collectorId={lastRecord.collectorId} capturedAt={lastRecord.capturedAt} status={lastRecord.status} receiptReference={lastRecord.receiptReference} principalAmount={lastRecord.amount} /></Suspense>}
           </div>
-          : <p className="empty-state workflow-empty">{identity.role === 'collector' ? 'This account has no branch assignment, so collections are unavailable.' : 'No field collection workflow is assigned to this account.'}</p>)}
+          : <p className="empty-state workflow-empty">{['collector', 'officer'].includes(identity.role) ? 'This account has no branch assignment, so collections are unavailable.' : 'No field collection workflow is assigned to this account.'}</p>)}
 
       {managerContext && <Suspense fallback={<p className="empty-state">Loading manager review…</p>}>
         <LazyManagerVarianceDashboard batches={reconciliationBatches.map((batch) => ({
