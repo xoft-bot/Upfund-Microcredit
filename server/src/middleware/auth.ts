@@ -20,11 +20,11 @@ export interface AuthenticatedUser {
   client_id?: string | null;
   permissions?: string[];
 }
-export type UserResolver = (firebaseUid: string) => Promise<AuthenticatedUser | null>;
+export type UserResolver = (firebaseUid: string, email?: string) => Promise<AuthenticatedUser | null>;
 
 export function createTokenVerifier(): TokenVerifier { return createConfiguredTokenVerifier(); }
 
-export async function resolveDatabaseUser(firebaseUid: string): Promise<AuthenticatedUser | null> {
+export async function resolveDatabaseUser(firebaseUid: string, email?: string): Promise<AuthenticatedUser | null> {
   const result = await pool.query<{ db_user_id: string; firebase_uid: string; role: string; branch_id: string | null; client_id: string | null; permissions: string[] }>(
     `SELECT u.id AS db_user_id, u.firebase_uid, r.code AS role, u.branch_id, u.client_id,
             COALESCE(array_agg(p.code) FILTER (WHERE p.code IS NOT NULL), '{}') AS permissions
@@ -32,9 +32,14 @@ export async function resolveDatabaseUser(firebaseUid: string): Promise<Authenti
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN role_permissions rp ON rp.role_id = r.id
        LEFT JOIN permissions p ON p.id = rp.permission_id
-       WHERE u.firebase_uid = $1 AND u.status = 'active'
+       WHERE u.status = 'active'
+         AND (
+           u.firebase_uid = $1
+           OR u.id::text = $1
+           OR ($2::text IS NOT NULL AND lower(u.email) = lower($2))
+         )
        GROUP BY u.id, u.firebase_uid, r.code, u.branch_id, u.client_id`,
-    [firebaseUid],
+    [firebaseUid, email?.trim() || null],
   );
   if (!result.rowCount) return null;
   const row = result.rows[0];
@@ -64,9 +69,11 @@ export function authMiddleware(
       return;
     }
     let firebaseUid: string;
+    let email: string | undefined;
     try {
       const decoded = await verifier(header.slice('Bearer '.length));
       firebaseUid = decoded.uid;
+      email = decoded.email;
     } catch {
       await reply.code(401).send({ ok: false, error: { code: 'UNAUTHENTICATED', message: 'Invalid authentication token' }, version: SYSTEM_VERSION });
       return;
@@ -75,13 +82,13 @@ export function authMiddleware(
       await reply.code(401).send({ ok: false, error: { code: 'UNAUTHENTICATED', message: 'Invalid authentication token' }, version: SYSTEM_VERSION });
       return;
     }
-    const user = await resolveUser(firebaseUid);
+    const user = await resolveUser(firebaseUid, email);
     if (!user) {
       await reply.code(403).send({ ok: false, error: { code: 'USER_NOT_FOUND', message: 'Firebase user is not mapped to an active account' }, version: SYSTEM_VERSION });
       return;
     }
     const dbUserId = user.dbUserId ?? user.db_user_id;
-    const firebaseUserId = user.firebaseUid ?? user.firebase_uid;
+    const firebaseUserId = firebaseUid;
     const branchId = user.branchId ?? user.branch_id ?? null;
     if (!dbUserId || !firebaseUserId) {
       await reply.code(403).send({ ok: false, error: { code: 'USER_IDENTITY_INVALID', message: 'Database identity is incomplete' }, version: SYSTEM_VERSION });
