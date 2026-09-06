@@ -14,6 +14,15 @@ let roleId: string;
 let clientId: string;
 let productId: string;
 let applicationId: string;
+const requiredRlsTables = [
+  'allocation_policies', 'application_transition_history', 'audit_events', 'branches',
+  'businesses', 'capital_pools', 'clients', 'collector_assignments',
+  'field_collection_records', 'kyc_records', 'ledger_entries', 'ledger_transactions',
+  'loan_applications', 'loan_disbursements', 'loan_products', 'loans',
+  'overpayment_holdings', 'payments', 'permissions', 'pool_allocations', 'receipts',
+  'reconciliation_payments', 'reconciliations', 'repayment_schedules',
+  'risk_assessments', 'role_permissions', 'roles', 'users',
+];
 
 suite('controlled underwriting and timeline integration', () => {
   beforeAll(async () => {
@@ -55,6 +64,18 @@ suite('controlled underwriting and timeline integration', () => {
   it('has the 014 underwriting evidence and timeline schema', async () => {
     const result = await pool!.query<{ table_name: string; column_name: string | null }>(`SELECT 'application_transition_history' AS table_name, NULL::text AS column_name WHERE to_regclass('application_transition_history') IS NOT NULL UNION ALL SELECT 'kyc_records', column_name FROM information_schema.columns WHERE table_name = 'kyc_records' AND column_name = 'evidence_notes' UNION ALL SELECT 'risk_assessments', column_name FROM information_schema.columns WHERE table_name = 'risk_assessments' AND column_name IN ('rationale', 'assessed_at')`);
     expect(result.rows.map((row) => `${row.table_name}:${row.column_name ?? 'table'}`)).toEqual(expect.arrayContaining(['application_transition_history:table', 'kyc_records:evidence_notes', 'risk_assessments:rationale', 'risk_assessments:assessed_at']));
+  });
+
+  it('has RLS enabled and forced for every custom application table', async () => {
+    const result = await pool!.query<{ tablename: string; rls_enabled: boolean; rls_forced: boolean }>(
+      `SELECT c.relname AS tablename, c.relrowsecurity AS rls_enabled, c.relforcerowsecurity AS rls_forced
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname = ANY($1::text[])`,
+      [requiredRlsTables],
+    );
+    expect(result.rows).toHaveLength(requiredRlsTables.length);
+    expect(result.rows.every((row) => row.rls_enabled && row.rls_forced)).toBe(true);
   });
 
   it('blocks approval before an approved risk assessment is recorded', async () => {

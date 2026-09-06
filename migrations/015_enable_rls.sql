@@ -25,8 +25,15 @@ BEGIN
           'CREATE POLICY %I ON %I FOR ALL TO %I USING (true) WITH CHECK (true)',
           'backend_full_access_' || backend_role, table_name, backend_role
         );
+        EXECUTE format('GRANT ALL PRIVILEGES ON TABLE %I TO %I', table_name, backend_role);
       END IF;
     END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE %I FROM anon', table_name);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+      EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE %I FROM authenticated', table_name);
+    END IF;
   END LOOP;
 END $$;
 
