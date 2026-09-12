@@ -1,0 +1,467 @@
+LETSGROW MICROCREDIT — FULL SYSTEM INTEGRATION & CAPABILITY TEST
+
+You are NOT being asked to create a demo, mockup, dummy app, static dashboard, or disconnected prototype.
+
+Audit and test the EXISTING Letsgrow Microcredit application as a real loan-management/financial operations system.
+
+OBJECTIVE:
+Prove whether the entire application is genuinely connected end-to-end: frontend → authentication → RBAC → API/backend → PostgreSQL → financial ledger → calculations → dashboards → audit logs.
+
+DO NOT rewrite working architecture unnecessarily. Inspect first, identify gaps, then fix only what is required.
+
+1. AUTHENTICATION & PORTALS
+
+Verify that separate authenticated experiences exist and work for:
+
+- Super Admin
+- Business/Company Admin
+- Branch Manager
+- Loan Officer / Field Agent
+- Collections/Recovery Officer
+- Accountant/Finance Officer
+- Marketing Officer
+- Client
+
+Each role must:
+- authenticate correctly
+- land on the correct dashboard
+- see only permitted data
+- be prevented from accessing unauthorized routes/API endpoints
+- have role-specific navigation and actions
+
+Test direct URL access and API authorization, not just UI hiding.
+
+2. ADMIN PORTAL
+
+Verify the highest-level admin can see and manage:
+
+- branches
+- users
+- roles/permissions
+- officers
+- clients
+- KYC
+- loan products
+- loans
+- repayments
+- collections
+- reconciliation
+- guarantors
+- risk
+- PAR
+- defaults
+- write-offs
+- capital
+- liquidity
+- operating expenses
+- revenue
+- profitability
+- portfolio performance
+- audit logs
+- system configuration
+
+Dashboard figures must originate from the database, not hardcoded values.
+
+3. MANAGER PORTAL
+
+Verify managers can manage their permitted branch/portfolio:
+
+- assigned officers
+- clients
+- loan applications
+- approvals within authority
+- collections
+- overdue accounts
+- PAR
+- daily collection targets
+- officer performance
+- branch reconciliation
+- branch financial performance
+
+Managers must NOT see or modify data outside their authorization scope.
+
+4. LOAN OFFICER / FIELD AGENT PORTAL
+
+Verify officers can:
+
+- register prospects
+- perform KYC
+- capture client/business information
+- capture identification/document references
+- register guarantors
+- submit loan applications
+- view assigned clients
+- view assigned loans
+- see collection schedules
+- record collections
+- issue/generate receipts
+- record notes/follow-ups
+- flag problems
+- see assigned daily collection targets
+- see overdue clients
+- view relevant client history
+
+Test poor-network/offline boundaries where implemented.
+
+5. COLLECTIONS / RECOVERY
+
+Verify the system supports:
+
+- daily collection schedules
+- officer collection assignment
+- payment recording
+- cash/mobile-money reference capture
+- receipt generation
+- pending reconciliation
+- verified reconciliation
+- failed/rejected reconciliation
+- overdue follow-up
+- recovery actions
+- collection history
+
+A payment must NOT become final financial truth merely because an officer entered it.
+
+6. ACCOUNTING & LEDGER
+
+Perform real transaction tests.
+
+Create a synthetic client and loan.
+
+Example:
+
+Principal = UGX 100,000
+Contractual charges = UGX 40,000
+
+Run the complete lifecycle:
+
+KYC
+→ application
+→ approval
+→ disbursement
+→ scheduled repayment
+→ payment
+→ reconciliation
+→ ledger posting
+→ outstanding balance
+→ revenue
+→ portfolio reporting
+
+Verify that every financial mutation creates the correct authoritative ledger entries.
+
+Test:
+
+- full payment
+- partial payment
+- late payment
+- missed payment
+- overpayment
+- duplicate payment
+- payment reversal
+- loan cancellation
+- default
+- write-off
+- renewal
+
+No transaction may silently disappear, duplicate, or alter historical records.
+
+7. CAPITAL & PROFITABILITY ENGINE
+
+Verify that the system distinguishes:
+
+- original capital
+- deployed principal
+- recovered principal
+- contractual revenue
+- collected revenue
+- credit losses
+- operating expenses
+- retained profit
+- available liquidity
+- eligible reinvestment capital
+
+The system must NOT treat all cash collected as profit or available lending capital.
+
+Verify that profitability and sustainability dashboards update automatically from actual transactions.
+
+8. CREDIT HISTORY & RISK
+
+Verify every client has a persistent credit history.
+
+Track:
+
+- applications
+- approvals/rejections
+- loan cycles
+- repayment behavior
+- missed payments
+- late payments
+- defaults
+- completed loans
+- outstanding loans
+- guarantor relationships
+- risk score
+- risk tier
+- graduation/loan-limit eligibility
+
+Test whether repayment behavior on Loan #1 affects eligibility for Loan #2.
+
+9. PAR & PORTFOLIO
+
+Verify calculations for:
+
+- PAR 1
+- PAR 7
+- PAR 30
+- outstanding principal
+- overdue principal
+- default rate
+- recovery rate
+- net credit loss
+- portfolio yield
+- officer portfolio performance
+- branch portfolio performance
+- total portfolio performance
+
+Use known synthetic transactions and independently verify the expected results.
+
+10. CLIENT PORTAL
+
+Verify clients can securely access their own:
+
+- profile
+- loan status
+- repayment schedule
+- payment history
+- statements
+- applicable balances
+- loan history
+- eligibility/next-loan information where permitted
+- notifications
+
+A client must NEVER be able to access another client's data by changing an ID in the URL/API request.
+
+11. MARKETING PORTAL
+
+Verify marketing staff can:
+
+- register prospects
+- track leads
+- attribute leads to officers/campaigns
+- track conversions
+- see onboarding pipeline
+- monitor targets
+- measure acquisition performance
+
+Marketing users must not access sensitive financial information unless explicitly authorized.
+
+12. GUARANTOR SYSTEM
+
+Verify guarantors can be:
+
+- registered
+- linked to clients
+- linked to specific loan obligations
+- tracked across relationships
+- restricted according to configured exposure limits
+
+Test circular/self-guaranteeing relationships and prevent invalid configurations.
+
+13. AUDIT & SECURITY
+
+Verify that sensitive actions generate audit records:
+
+- login
+- KYC changes
+- loan approval
+- loan modification
+- disbursement
+- payment
+- reconciliation
+- reversal
+- write-off
+- user/role changes
+- configuration changes
+
+Test unauthorized API requests directly.
+
+Never rely only on frontend permission checks.
+
+14. DATABASE CONNECTIVITY
+
+Trace each major feature from:
+
+UI
+→ API request
+→ backend service
+→ PostgreSQL
+→ transaction/ledger
+→ response
+→ dashboard/read model
+
+Identify every mocked, hardcoded, placeholder, fake, static or disconnected component.
+
+Search the codebase for:
+
+- TODO
+- FIXME
+- mock data
+- fake data
+- hardcoded financial values
+- placeholder API responses
+- local-only financial state
+- bypassed authentication
+- disabled authorization
+- simulated ledger entries
+
+Report every finding.
+
+15. END-TO-END TEST DATA
+
+Create a controlled synthetic dataset containing:
+
+- 3 branches
+- multiple users in every role
+- at least 30 clients
+- multiple loan products
+- multiple loan cycles
+- performing clients
+- late clients
+- partially paying clients
+- defaulted clients
+- guarantor relationships
+- collections
+- reconciled/unreconciled payments
+- operating expenses
+
+Use this dataset to verify dashboards and reports.
+
+16. CROSS-PORTAL CONSISTENCY
+
+Perform actions in one portal and verify their effects everywhere else.
+
+Examples:
+
+Officer records payment
+→ Manager sees collection
+→ Accountant sees reconciliation
+→ Ledger updates
+→ Client sees payment
+→ Loan balance changes
+→ PAR changes
+→ Portfolio changes
+→ Capital position changes
+
+Manager approves loan
+→ Loan becomes eligible for disbursement
+→ disbursement updates ledger
+→ officer sees active loan
+→ client sees loan
+→ portfolio increases
+
+Client completes loan
+→ credit history updates
+→ risk score updates
+→ graduation eligibility changes
+→ manager/officer sees new eligibility.
+
+17. REPORTING
+
+Verify all reports are dynamically calculated from authoritative data.
+
+Test:
+
+- daily collections
+- officer collections
+- branch collections
+- outstanding loans
+- aging
+- PAR
+- defaults
+- repayments
+- revenue
+- expenses
+- profitability
+- capital
+- liquidity
+- client growth
+- officer performance
+- portfolio performance
+
+18. FINAL SYSTEM TEST
+
+Execute a complete synthetic business day:
+
+Morning:
+- officers receive assignments
+- manager views targets
+- officers collect payments
+- new prospect is registered
+- loan application submitted
+
+Midday:
+- manager approves loan
+- loan is disbursed
+- another client makes partial payment
+- payment enters reconciliation
+
+End of day:
+- officer reconciles collections
+- accountant verifies transactions
+- ledger updates
+- PAR recalculates
+- capital/liquidity recalculates
+- dashboards update
+- client portal reflects changes
+- audit trail records everything
+
+FINAL OUTPUT:
+
+Do NOT simply say "system works."
+
+Produce a structured audit:
+
+A. WORKING
+B. PARTIALLY WORKING
+C. DISCONNECTED
+D. MOCKED/HARDCODED
+E. SECURITY ISSUES
+F. FINANCIAL/LEDGER ISSUES
+G. RBAC ISSUES
+H. DATABASE ISSUES
+I. FRONTEND ISSUES
+J. BACKEND/API ISSUES
+K. MISSING FEATURES
+L. PERFORMANCE/SCALABILITY ISSUES
+M. OFFLINE/PWA ISSUES
+N. CRITICAL RISKS
+
+For every failure provide:
+
+- feature
+- expected behavior
+- actual behavior
+- root cause
+- affected files/components
+- severity
+- recommended fix
+
+Then create a PRIORITIZED REMEDIATION PLAN:
+
+P0 = financial correctness/security/data-loss issues
+P1 = broken core workflows
+P2 = missing operational functionality
+P3 = UX/performance improvements
+
+IMPORTANT:
+
+Do not replace real backend functionality with mocks merely to make tests pass.
+
+Do not hardcode numbers.
+
+Do not bypass authentication or RBAC.
+
+Do not delete financial history to correct test data.
+
+Use reversible test fixtures/migrations.
+
+The final goal is to prove that Letsgrow is a functioning, integrated loan-management and financial operations platform — not merely a collection of attractive dashboards.

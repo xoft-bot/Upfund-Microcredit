@@ -1,0 +1,1 @@
+- [Imported repository workflow](imported-repo-workflow.md) — preserve platform support files, adopt the repo's own workspace metadata, and refresh managed artifacts after import.
