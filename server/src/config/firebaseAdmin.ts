@@ -9,7 +9,7 @@ function requireLiveCredentials(): { projectId: string; clientEmail: string; pri
   if (!projectId || !clientEmail || !privateKey) throw new Error('FIREBASE_ADMIN_CREDENTIALS_NOT_CONFIGURED');
   return { projectId, clientEmail, privateKey };
 }
-function getFirebaseApp(): admin.app.App {
+export function getFirebaseApp(): admin.app.App {
   if (admin.apps.length > 0) return admin.app();
   const credentials = requireLiveCredentials(); return admin.initializeApp({ credential: admin.credential.cert(credentials) });
 }
