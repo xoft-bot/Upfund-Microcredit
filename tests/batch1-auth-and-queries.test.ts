@@ -20,7 +20,7 @@ describe('Batch 1 authoritative authentication', () => {
     } as never);
     const user = await resolveDatabaseUser(managerUser.firebaseUid);
     expect(user).toMatchObject({ ...managerUser, db_user_id: managerUser.dbUserId, firebase_uid: managerUser.firebaseUid, branch_id: managerUser.branchId });
-    expect(query.mock.calls[0][1]).toEqual([managerUser.firebaseUid]);
+    expect(query.mock.calls[0][1]).toEqual([managerUser.firebaseUid, null]);
   });
 
   it('returns 403 for a valid Firebase token with no active database mapping', async () => {
