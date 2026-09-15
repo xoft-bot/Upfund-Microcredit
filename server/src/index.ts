@@ -1,5 +1,6 @@
 import { buildApp } from './app.js';
 import { runReconciliationCycle } from './jobs/reconciliationCron.js';
+import { runOverdueDetectionCycle } from './jobs/overdueDetectionCron.js';
 import { getServerPort, validateRuntimeConfig } from './config.js';
 import { pool } from './db.js';
 
@@ -34,8 +35,30 @@ if (schedulerEnabled && schedulerActorUserId && Number.isInteger(schedulerInterv
   app.log.error('reconciliation scheduler requires an actor user id and an interval of at least 60000ms');
 }
 
+const overdueSchedulerEnabled = process.env.OVERDUE_SCHEDULER_ENABLED === 'true';
+const overdueSchedulerIntervalMs = Number(process.env.OVERDUE_SCHEDULER_INTERVAL_MS ?? 3_600_000);
+const overdueSchedulerActorUserId = process.env.OVERDUE_SCHEDULER_ACTOR_USER_ID;
+let overdueSchedulerTimer: NodeJS.Timeout | undefined;
+
+if (overdueSchedulerEnabled && overdueSchedulerActorUserId && Number.isInteger(overdueSchedulerIntervalMs) && overdueSchedulerIntervalMs >= 60_000) {
+  const runScheduledOverdueDetection = async () => {
+    try {
+      const result = await runOverdueDetectionCycle({ actorUserId: overdueSchedulerActorUserId });
+      app.log.info({ ...result }, 'overdue detection cycle completed');
+    } catch (error) {
+      app.log.error({ err: error }, 'overdue detection cycle failed');
+    }
+  };
+  overdueSchedulerTimer = setInterval(() => void runScheduledOverdueDetection(), overdueSchedulerIntervalMs);
+  overdueSchedulerTimer.unref();
+  void runScheduledOverdueDetection();
+} else if (overdueSchedulerEnabled) {
+  app.log.error('overdue detection scheduler requires an actor user id and an interval of at least 60000ms');
+}
+
 const shutdown = async () => {
   if (schedulerTimer) clearInterval(schedulerTimer);
+  if (overdueSchedulerTimer) clearInterval(overdueSchedulerTimer);
   await Promise.all([app.close(), pool.end()]);
 };
 const handleShutdown = () => {
