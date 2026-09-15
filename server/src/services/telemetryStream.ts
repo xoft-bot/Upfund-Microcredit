@@ -25,8 +25,17 @@ export async function getQueueDepth(): Promise<QueueDepth> {
   const row = result.rows[0]; return { pendingPayments: Number(row.pending_payments), pendingFieldCollections: Number(row.pending_field_collections), varianceBatches: Number(row.variance_batches) };
 }
 
-export async function streamAuditEvents(input: { after?: string; limit?: number; correlationId?: string }): Promise<SafeAuditEvent[]> {
+export async function streamAuditEvents(input: { after?: string; limit?: number; correlationId?: string; branchId?: string | null }): Promise<SafeAuditEvent[]> {
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
-  const result = await pool.query<{ id: string; action: string; entity_type: string; entity_id: string | null; correlation_id: string; metadata: Record<string, unknown>; created_at: Date }>(`SELECT id, action, entity_type, entity_id, correlation_id, metadata, created_at FROM audit_events WHERE ($1::timestamptz IS NULL OR created_at > $1::timestamptz) AND ($2::uuid IS NULL OR correlation_id = $2::uuid) ORDER BY created_at ASC, id ASC LIMIT $3`, [input.after ?? null, input.correlationId ?? null, limit]);
+  const result = await pool.query<{ id: string; action: string; entity_type: string; entity_id: string | null; correlation_id: string; metadata: Record<string, unknown>; created_at: Date }>(
+    `SELECT id, action, entity_type, entity_id, correlation_id, metadata, created_at
+       FROM audit_events
+      WHERE ($1::timestamptz IS NULL OR created_at > $1::timestamptz)
+        AND ($2::uuid IS NULL OR correlation_id = $2::uuid)
+        AND ($3::uuid IS NULL OR branch_id = $3::uuid)
+      ORDER BY created_at ASC, id ASC
+      LIMIT $4`,
+    [input.after ?? null, input.correlationId ?? null, input.branchId ?? null, limit],
+  );
   return result.rows.map((row) => ({ id: row.id, action: row.action, entityType: row.entity_type, entityId: row.entity_id ? '[REDACTED]' : null, correlationId: row.correlation_id, metadata: maskTelemetry(row.metadata) as Record<string, unknown>, createdAt: row.created_at.toISOString() }));
 }

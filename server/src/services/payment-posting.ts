@@ -241,7 +241,7 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
     { accountCode: 'realized.interest', side: 'credit' as const, amount: allocation.interestAmount },
     { accountCode: 'overpayment.holding', side: 'credit' as const, amount: allocation.overpaymentAmount },
   ].filter((line) => line.amount > 0);
-  const ledger = await postLedgerTransactionOnClient(client, { actorUserId: input.actorUserId, sourceType: 'manual_payment', sourceId: paymentId, idempotencyKey: `payment-ledger:${input.idempotencyKey}`, correlationId: input.correlationId, description: 'Manual payment posting', lines: [{ accountCode: 'cash.manual', side: 'debit', amount: input.amount }, ...creditLines] });
+  const ledger = await postLedgerTransactionOnClient(client, { actorUserId: input.actorUserId, sourceType: 'manual_payment', sourceId: paymentId, idempotencyKey: `payment-ledger:${input.idempotencyKey}`, correlationId: input.correlationId, branchId: input.branchId, description: 'Manual payment posting', lines: [{ accountCode: 'cash.manual', side: 'debit', amount: input.amount }, ...creditLines] });
   if (allocation.overpaymentAmount > 0) {
     await client.query(
       `INSERT INTO overpayment_holdings (payment_id, loan_id, branch_id, amount)
@@ -256,6 +256,7 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
     action: 'payment.posted',
     entityType: 'payment',
     entityId: paymentId,
+    branchId: input.branchId,
     correlationId: input.correlationId,
     metadata: {
       loanId: input.loanId,

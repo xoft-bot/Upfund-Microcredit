@@ -18,6 +18,6 @@ export async function quarantineVarianceBatchOnClient(client: DbClient, input: {
   const reconciliation = await client.query<{ id: string }>(`INSERT INTO reconciliations (branch_id, batch_reference, expected_amount, recorded_amount, submitted_amount, variance, status, submitted_by) VALUES ($1, $2, $3, $4, $5, $6, 'variance', $7) RETURNING id`, [input.branchId, input.batchReference, input.expectedAmount, input.recordedAmount, input.submittedAmount, input.variance, input.actorUserId]);
   const reconciliationId = reconciliation.rows[0].id;
   for (const paymentId of input.paymentIds) await client.query('INSERT INTO reconciliation_payments (reconciliation_id, payment_id) VALUES ($1, $2)', [reconciliationId, paymentId]);
-  await insertAuditEvent(client, { actorUserId: input.actorUserId, action: 'reconciliation.batch.quarantined', entityType: 'reconciliation', entityId: reconciliationId, correlationId: input.correlationId, metadata: { batchReference: input.batchReference, variance: input.variance } });
+  await insertAuditEvent(client, { actorUserId: input.actorUserId, action: 'reconciliation.batch.quarantined', entityType: 'reconciliation', entityId: reconciliationId, branchId: input.branchId, correlationId: input.correlationId, metadata: { batchReference: input.batchReference, variance: input.variance } });
   return reconciliationId;
 }

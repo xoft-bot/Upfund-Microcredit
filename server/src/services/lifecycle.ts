@@ -320,7 +320,7 @@ export async function createLoanApplication(actor: Actor, input: { clientId: str
       [input.clientId, input.productId, branchId, input.requestedAmount, actor.userId],
     );
     await recordApplicationTransition(client, result.rows[0].id, null, 'draft', actor.userId);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.application.created', entityType: 'loan_application', entityId: result.rows[0].id, correlationId: randomUUID(), metadata: { branchId, clientId: input.clientId } });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.application.created', entityType: 'loan_application', entityId: result.rows[0].id, branchId, correlationId: randomUUID(), metadata: { branchId, clientId: input.clientId } });
     return {
       id: result.rows[0].id,
       clientId: input.clientId,
@@ -419,7 +419,7 @@ export async function submitLoanApplication(actor: Actor, applicationId: string)
     assertApplicationTransition(application.status, 'submitted');
     await client.query(`UPDATE loan_applications SET status = 'submitted', submitted_at = now() WHERE id = $1`, [applicationId]);
     await recordApplicationTransition(client, applicationId, application.status, 'submitted', actor.userId);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.application.submitted', entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID() });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.application.submitted', entityType: 'loan_application', entityId: applicationId, branchId: application.branch_id, correlationId: randomUUID() });
     return { id: applicationId, status: 'submitted' };
   });
 }
@@ -441,7 +441,7 @@ export async function reviewKyc(actor: Actor, applicationId: string, input: { st
     }
     await client.query(`UPDATE loan_applications SET status = $1 WHERE id = $2`, [nextApplicationStatus, applicationId]);
     await recordApplicationTransition(client, applicationId, application.status, nextApplicationStatus, actor.userId, input.evidenceNotes);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: `client.kyc.${input.status}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { verificationMethod: input.verificationMethod.trim(), evidenceNotes: input.evidenceNotes.trim() } });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: `client.kyc.${input.status}`, entityType: 'loan_application', entityId: applicationId, branchId: application.branch_id, correlationId: randomUUID(), metadata: { verificationMethod: input.verificationMethod.trim(), evidenceNotes: input.evidenceNotes.trim() } });
     return { id: applicationId, applicationStatus: nextApplicationStatus, kycStatus: input.status };
   });
 }
@@ -461,7 +461,7 @@ export async function assessApplicationRisk(actor: Actor, applicationId: string,
     );
     await client.query(`UPDATE loan_applications SET status = $1, risk_assessment_id = (SELECT id FROM risk_assessments WHERE application_id = $2) WHERE id = $2`, [nextApplicationStatus, applicationId]);
     await recordApplicationTransition(client, applicationId, application.status, nextApplicationStatus, actor.userId, input.rationale);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.risk.${input.status}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { score: input.score, riskGrade: input.riskGrade, policyVersion: input.policyVersion, rationale: input.rationale.trim() } });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.risk.${input.status}`, entityType: 'loan_application', entityId: applicationId, branchId: application.branch_id, correlationId: randomUUID(), metadata: { score: input.score, riskGrade: input.riskGrade, policyVersion: input.policyVersion, rationale: input.rationale.trim() } });
     return { id: applicationId, applicationStatus: nextApplicationStatus, riskStatus: input.status };
   });
 }
@@ -491,7 +491,7 @@ export async function decideApplication(actor: Actor, applicationId: string, inp
       await persistRepaymentSchedule(client, loanId, schedule);
     }
     await recordApplicationTransition(client, applicationId, application.status, nextStatus, actor.userId, input.reason);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.${input.decision === 'approve' ? 'approved' : 'rejected'}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { reason: input.reason.trim(), loanId } });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.${input.decision === 'approve' ? 'approved' : 'rejected'}`, entityType: 'loan_application', entityId: applicationId, branchId: application.branch_id, correlationId: randomUUID(), metadata: { reason: input.reason.trim(), loanId } });
     return { id: applicationId, status: nextStatus, loanId };
   });
 }
@@ -526,6 +526,7 @@ export async function disburseLoan(actor: Actor, loanId: string, input: { disbur
       sourceId: loanId,
       idempotencyKey: `disbursement-ledger:${input.idempotencyKey.trim()}`,
       correlationId: randomUUID(),
+      branchId: loan.branch_id,
       description: 'Loan disbursement',
       lines: [
         { accountCode: 'loan.receivable', side: 'debit', amount: toNumber(loan.principal_amount) },
@@ -533,7 +534,7 @@ export async function disburseLoan(actor: Actor, loanId: string, input: { disbur
       ],
     });
     await recordApplicationTransition(client, loan.application_id, 'approved', 'disbursed', actor.userId, input.disbursementReference.trim());
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.disbursed', entityType: 'loan', entityId: loanId, correlationId: randomUUID(), metadata: { disbursementReference: input.disbursementReference.trim(), ledgerTransactionId: ledger.transactionId } });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: 'loan.disbursed', entityType: 'loan', entityId: loanId, branchId: loan.branch_id, correlationId: randomUUID(), metadata: { disbursementReference: input.disbursementReference.trim(), ledgerTransactionId: ledger.transactionId } });
     return { loanId, status: 'disbursed', disbursementReference: input.disbursementReference.trim(), amount: toNumber(loan.principal_amount), created: true };
   });
 }
@@ -545,7 +546,7 @@ export async function transitionLoan(actor: Actor, loanId: string, status: Exclu
     assertBranchScope(actor, loan.branch_id);
     assertLoanTransition(loan.status, status);
     await client.query(`UPDATE loans SET status = $1, version = version + 1 WHERE id = $2`, [status, loanId]);
-    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.status.${status}`, entityType: 'loan', entityId: loanId, correlationId: randomUUID(), metadata: { reason: reason.trim() } });
+    await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.status.${status}`, entityType: 'loan', entityId: loanId, branchId: loan.branch_id, correlationId: randomUUID(), metadata: { reason: reason.trim() } });
     return { loanId, status };
   });
 }

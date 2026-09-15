@@ -56,6 +56,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   registerAccountantReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerCollectorReportingRoutes(app, options.tokenVerifier, options.userResolver);
   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
+  if (process.env.NODE_ENV !== 'production') {
   app.post('/api/stage1/commands/audit-ledger', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => request.body && typeof request.body === 'object' ? (request.body as { branchId?: string }).branchId : undefined)],
     schema: {
@@ -79,6 +80,8 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
     if (!result) return reply.code(404).send({ ok: false, error: { code: 'BRANCH_NOT_FOUND', message: 'Branch not found' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
     return { ok: true, data: result, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
+
+  }
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error({ err: error, correlationId: request.headers['x-correlation-id'] }, 'request failed');

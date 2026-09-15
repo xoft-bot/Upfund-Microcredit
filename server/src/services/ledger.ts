@@ -15,6 +15,7 @@ export interface PostLedgerInput {
   sourceId: string;
   idempotencyKey: string;
   correlationId?: string;
+  branchId?: string | null;
   description: string;
   lines: LedgerLine[];
 }
@@ -59,6 +60,7 @@ export async function postLedgerTransactionOnClient(client: DbClient, input: Pos
     action: 'ledger.transaction.posted',
     entityType: 'ledger_transaction',
     entityId: transactionId,
+    branchId: input.branchId ?? null,
     correlationId,
     metadata: { sourceType: input.sourceType, sourceId: input.sourceId, idempotencyKey: input.idempotencyKey },
   });

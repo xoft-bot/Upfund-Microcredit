@@ -93,6 +93,7 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
       action: 'reconciliation.batch.rejected',
       entityType: 'reconciliation',
       entityId: reconciliationId,
+      branchId: input.branchId,
       correlationId: input.correlationId,
       metadata: { variance: result.variance, reason },
     });
@@ -138,6 +139,7 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     sourceId: reconciliationId,
     idempotencyKey: `reconciliation-ledger:${input.batchReference}`,
     correlationId: input.correlationId,
+    branchId: input.branchId,
     description: 'Reconciliation cash transfer and realized surplus allocation',
     lines: [
       { accountCode: 'cash.reconciled', side: 'debit', amount: result.recordedAmount },
@@ -164,6 +166,7 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     action: 'reconciliation.batch.posted',
     entityType: 'reconciliation',
     entityId: reconciliationId,
+    branchId: input.branchId,
     correlationId: input.correlationId,
     metadata: {
       variance: result.variance,

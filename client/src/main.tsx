@@ -153,8 +153,8 @@ function App() {
   const addRecord = (record: FieldCollectionRecord) => { setRecords((current) => [...current.filter((item) => item.localId !== record.localId), record]); setLastRecord(record); };
   const metrics = queueSnapshot.metrics ?? emptyMetrics;
   const collectorContextReady = Boolean(identity && ['collector', 'officer'].includes(identity.role) && identity.branchId);
-  const managerContext = identity && ['admin', 'manager', 'accountant'].includes(identity.role) ? identity : null;
-  const portalContext = identity && ['admin', 'manager', 'officer', 'client', 'marketing'].includes(identity.role);
+  const managerContext = identity && ['admin', 'manager'].includes(identity.role) ? identity : null;
+  const portalContext = identity && ['admin', 'manager', 'officer', 'client', 'marketing', 'accountant'].includes(identity.role);
   const routeName = identity?.branchName ? `${identity.branchName} route` : 'Assigned collection route';
 
   const displayedRecords = [...serverRecords, ...records.filter((local) => !serverRecords.some((server) => server.localId === local.localId))];

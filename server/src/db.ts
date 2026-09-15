@@ -100,14 +100,15 @@ export async function insertAuditEvent(
     action: string;
     entityType: string;
     entityId?: string | null;
+    branchId?: string | null;
     correlationId: string;
     metadata?: Record<string, unknown>;
   },
 ): Promise<void> {
   await client.query(
     `INSERT INTO audit_events
-      (actor_user_id, action, entity_type, entity_id, correlation_id, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-    [input.actorUserId, input.action, input.entityType, input.entityId ?? null, input.correlationId, JSON.stringify(input.metadata ?? {})],
+      (actor_user_id, action, entity_type, entity_id, branch_id, correlation_id, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [input.actorUserId, input.action, input.entityType, input.entityId ?? null, input.branchId ?? null, input.correlationId, JSON.stringify(input.metadata ?? {})],
   );
 }
