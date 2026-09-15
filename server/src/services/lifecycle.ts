@@ -4,6 +4,7 @@ import type { Actor } from '../../../shared/contracts.js';
 import { insertAuditEvent, pool, withTransaction, type DbClient } from '../db.js';
 import { assertApplicationTransition, assertKycTransition, assertLoanTransition, type ApplicationStatus, type KycStatus, type LoanStatus } from './state-machines.js';
 import { postLedgerTransactionOnClient } from './ledger.js';
+import { loadProductTerms, buildRepaymentSchedule, persistRepaymentSchedule } from './schedule.js';
 
 export class LifecycleError extends Error {
   constructor(readonly code: string, message: string, readonly statusCode = 400) {
@@ -57,6 +58,9 @@ export interface PortalProduct {
   name: string;
   currency: string;
   active: boolean;
+  annualRatePercent: number;
+  installments: number;
+  repaymentCycle: 'monthly' | 'biweekly';
 }
 
 export interface LoanSchedule {
@@ -130,11 +134,12 @@ async function findApplication(client: DbClient | Pool, applicationId: string, f
     client_id: string;
     client_name: string;
     branch_id: string;
+    product_id: string;
     requested_amount: string;
     status: ApplicationStatus;
   }>(
     `SELECT la.id, la.client_id, c.display_name AS client_name, la.branch_id,
-            la.requested_amount, la.status
+            la.product_id, la.requested_amount, la.status
        FROM loan_applications la
        JOIN clients c ON c.id = la.client_id
       WHERE la.id = $1${suffix}`,
@@ -222,8 +227,9 @@ export async function getPortalOverview(actor: Actor): Promise<PortalOverview> {
         ORDER BY c.created_at DESC LIMIT 50`,
       clientScope.values,
     ),
-    pool.query<{ id: string; code: string; name: string; currency: string; active: boolean }>(
-      `SELECT id, code, name, currency, active FROM loan_products WHERE active = true ORDER BY name`,
+    pool.query<{ id: string; code: string; name: string; currency: string; active: boolean; annual_rate_percent: string; installments: number; repayment_cycle: 'monthly' | 'biweekly' }>(
+      `SELECT id, code, name, currency, active, annual_rate_percent, installments, repayment_cycle
+         FROM loan_products WHERE active = true ORDER BY name`,
     ),
   ]);
 
@@ -266,7 +272,16 @@ export async function getPortalOverview(actor: Actor): Promise<PortalOverview> {
       branchId: row.branch_id,
       createdAt: toIso(row.created_at),
     })),
-    products: productsResult.rows.map((row) => ({ id: row.id, code: row.code, name: row.name, currency: row.currency, active: row.active })),
+    products: productsResult.rows.map((row) => ({
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      currency: row.currency,
+      active: row.active,
+      annualRatePercent: toNumber(row.annual_rate_percent),
+      installments: row.installments,
+      repaymentCycle: row.repayment_cycle,
+    })),
   };
 }
 
@@ -471,7 +486,9 @@ export async function decideApplication(actor: Actor, applicationId: string, inp
         [applicationId, application.client_id, application.branch_id, application.requested_amount],
       );
       loanId = loan.rows[0].id;
-      await client.query(`INSERT INTO repayment_schedules (loan_id, due_on, principal_due, charge_due) VALUES ($1, current_date + 30, $2, 0)`, [loanId, application.requested_amount]);
+      const productTerms = await loadProductTerms(client, application.product_id);
+      const schedule = buildRepaymentSchedule(toNumber(application.requested_amount), productTerms, new Date());
+      await persistRepaymentSchedule(client, loanId, schedule);
     }
     await recordApplicationTransition(client, applicationId, application.status, nextStatus, actor.userId, input.reason);
     await insertAuditEvent(client, { actorUserId: actor.userId, action: `loan.application.${input.decision === 'approve' ? 'approved' : 'rejected'}`, entityType: 'loan_application', entityId: applicationId, correlationId: randomUUID(), metadata: { reason: input.reason.trim(), loanId } });

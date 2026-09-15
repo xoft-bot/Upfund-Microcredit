@@ -20,7 +20,15 @@ export interface SeedUser {
   clientId?: string | null;
   status?: 'active' | 'disabled';
 }
-export interface SeedLoanProduct { code: string; name: string; currency?: string; active?: boolean; }
+export interface SeedLoanProduct {
+  code: string;
+  name: string;
+  currency?: string;
+  active?: boolean;
+  annualRatePercent?: number;
+  installments?: number;
+  repaymentCycle?: 'monthly' | 'biweekly';
+}
 export interface SeedCollectorAssignment {
   officerFirebaseUid: string;
   clientId: string;
@@ -106,7 +114,21 @@ export function parseSeedInput(raw: unknown, options: { allowEmpty?: boolean } =
     const currency = value.currency === undefined ? 'UGX' : requiredText(value.currency, 'currency').toUpperCase();
     if (!/^[A-Z]{3}$/.test(currency)) throw new Error('SEED_INVALID_CURRENCY');
     if (value.active !== undefined && typeof value.active !== 'boolean') throw new Error('SEED_INVALID_LOAN_PRODUCT_ACTIVE');
-    return { code: stableCode(value.code, 'loan_product'), name: requiredText(value.name, 'loan_product_name'), currency, active: value.active === undefined ? true : value.active };
+    const annualRatePercent = value.annualRatePercent === undefined ? 0 : Number(value.annualRatePercent);
+    if (!Number.isFinite(annualRatePercent) || annualRatePercent < 0) throw new Error('SEED_INVALID_LOAN_PRODUCT_RATE');
+    const installments = value.installments === undefined ? 1 : Number(value.installments);
+    if (!Number.isInteger(installments) || installments <= 0) throw new Error('SEED_INVALID_LOAN_PRODUCT_INSTALLMENTS');
+    const repaymentCycle = value.repaymentCycle === undefined ? 'monthly' : value.repaymentCycle;
+    if (repaymentCycle !== 'monthly' && repaymentCycle !== 'biweekly') throw new Error('SEED_INVALID_LOAN_PRODUCT_CYCLE');
+    return {
+      code: stableCode(value.code, 'loan_product'),
+      name: requiredText(value.name, 'loan_product_name'),
+      currency,
+      active: value.active === undefined ? true : value.active,
+      annualRatePercent,
+      installments,
+      repaymentCycle: repaymentCycle as 'monthly' | 'biweekly',
+    };
   });
   const collectorAssignments = listValue(input.collectorAssignments, 'collector_assignments').map((item) => {
     const value = objectValue(item, 'collector_assignment');
@@ -218,9 +240,16 @@ export async function seedDatabase(input: SeedInput, transaction: TransactionRun
 
     for (const product of validated.loanProducts) {
       await client.query(
-        `INSERT INTO loan_products (code, name, currency, active) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, currency = EXCLUDED.currency, active = EXCLUDED.active`,
-        [product.code, product.name, product.currency ?? 'UGX', product.active ?? true],
+        `INSERT INTO loan_products (code, name, currency, active, annual_rate_percent, installments, repayment_cycle)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (code) DO UPDATE SET
+           name = EXCLUDED.name,
+           currency = EXCLUDED.currency,
+           active = EXCLUDED.active,
+           annual_rate_percent = EXCLUDED.annual_rate_percent,
+           installments = EXCLUDED.installments,
+           repayment_cycle = EXCLUDED.repayment_cycle`,
+        [product.code, product.name, product.currency ?? 'UGX', product.active ?? true, product.annualRatePercent ?? 0, product.installments ?? 1, product.repaymentCycle ?? 'monthly'],
       );
     }
     return { branches: validated.branches.length, users: validated.users.length, loanProducts: validated.loanProducts.length, collectorAssignments: validated.collectorAssignments?.length ?? 0 };

@@ -3,14 +3,12 @@
  * stress-testing — loan products, sample clients, and loans spanning the
  * pending/active/overdue/fully-paid lifecycle — entirely through the
  * project's own validated services (seedDatabase, lifecycle.ts,
- * payment-posting.ts). No raw business-rule logic is reimplemented here.
- *
- * IMPORTANT SCHEMA NOTE: this schema does not persist interest rate, term
- * length, or repayment cycle anywhere (not on loan_products, loans, or
- * loan_applications) — interest only exists as an absolute amount on each
- * repayment_schedules row. The PRODUCT_TERMS constants below are seed-time
- * assumptions used only to compute those row amounts; they are not saved
- * as product configuration anywhere in the database.
+ * payment-posting.ts). No schedule-math is reimplemented here: loan
+ * products persist their own rate/term/cycle (see loan_products migration),
+ * and decideApplication (services/lifecycle.ts) generates and persists a
+ * full repayment schedule on approval via services/schedule.ts. This script
+ * only overrides that schedule's anchor date for the 'overdue' scenario, so
+ * the first installment is genuinely past due.
  *
  * Prerequisites: run seed-test-accounts.ts first (needs the MAIN branch and
  * the officer/manager/collector test users already in Postgres).
@@ -37,60 +35,31 @@ import {
   disburseLoan,
   transitionLoan,
 } from '../services/lifecycle.js';
+import { loadProductTerms, buildRepaymentSchedule, persistRepaymentSchedule } from '../services/schedule.js';
 import { postManualPayment } from '../services/payment-posting.js';
 import type { Actor, UserRole } from '../../../shared/contracts.js';
 
-const DEMO_RUN_TAG = '005';
+const DEMO_RUN_TAG = '006';
 const BRANCH_CODE = 'MAIN';
 
 type ProductCode = 'PERSONAL' | 'BUSINESS_GROWTH' | 'EMERGENCY';
 
-// Seed-time-only assumptions used to compute repayment_schedules amounts.
-// Not persisted as product config anywhere in the schema (see file header).
-const PRODUCT_TERMS: Record<ProductCode, { annualRatePercent: number; installments: number; cycle: 'monthly' | 'biweekly' }> = {
-  PERSONAL: { annualRatePercent: 24, installments: 6, cycle: 'monthly' },
-  BUSINESS_GROWTH: { annualRatePercent: 20, installments: 12, cycle: 'monthly' },
-  EMERGENCY: { annualRatePercent: 30, installments: 3, cycle: 'biweekly' },
-};
+interface PersistedScheduleRow { dueOn: string; principalDue: number; interestDue: number; }
 
-interface ScheduleRow { dueOn: string; principalDue: number; interestDue: number; }
-
-function buildAmortizationSchedule(principal: number, terms: { annualRatePercent: number; installments: number; cycle: 'monthly' | 'biweekly' }, anchorDate: Date): ScheduleRow[] {
-  const cycleDays = terms.cycle === 'monthly' ? 30 : 14;
-  const totalDays = cycleDays * terms.installments;
-  const totalInterest = Math.round(principal * (terms.annualRatePercent / 100) * (totalDays / 365));
-  const basePrincipal = Math.floor(principal / terms.installments);
-  const baseInterest = Math.floor(totalInterest / terms.installments);
-
-  const rows: ScheduleRow[] = [];
-  let remainingPrincipal = principal;
-  let remainingInterest = totalInterest;
-  const dueDate = new Date(anchorDate);
-
-  for (let i = 1; i <= terms.installments; i += 1) {
-    if (terms.cycle === 'monthly') dueDate.setMonth(dueDate.getMonth() + 1);
-    else dueDate.setDate(dueDate.getDate() + 14);
-    const isLast = i === terms.installments;
-    const principalDue = isLast ? remainingPrincipal : basePrincipal;
-    const interestDue = isLast ? remainingInterest : baseInterest;
-    remainingPrincipal -= principalDue;
-    remainingInterest -= interestDue;
-    rows.push({ dueOn: dueDate.toISOString().slice(0, 10), principalDue, interestDue });
-  }
-  return rows;
+async function backdateScheduleForOverdue(loanId: string, productId: string, principal: number, anchor: Date): Promise<void> {
+  await withTransaction(async (client) => {
+    const terms = await loadProductTerms(client, productId);
+    const rows = buildRepaymentSchedule(principal, terms, anchor);
+    await persistRepaymentSchedule(client, loanId, rows);
+  });
 }
 
-async function replaceLoanSchedule(loanId: string, rows: ScheduleRow[]): Promise<void> {
-  await withTransaction(async (client) => {
-    await client.query('DELETE FROM repayment_schedules WHERE loan_id = $1', [loanId]);
-    for (const row of rows) {
-      await client.query(
-        `INSERT INTO repayment_schedules (loan_id, due_on, principal_due, charge_due, interest_due)
-         VALUES ($1, $2, $3, 0, $4)`,
-        [loanId, row.dueOn, row.principalDue, row.interestDue],
-      );
-    }
-  });
+async function loadPersistedSchedule(loanId: string): Promise<PersistedScheduleRow[]> {
+  const result = await pool.query<{ due_on: string; principal_due: string; interest_due: string }>(
+    `SELECT due_on, principal_due, interest_due FROM repayment_schedules WHERE loan_id = $1 ORDER BY due_on ASC`,
+    [loanId],
+  );
+  return result.rows.map((row) => ({ dueOn: row.due_on, principalDue: Number(row.principal_due), interestDue: Number(row.interest_due) }));
 }
 
 async function loadActor(email: string): Promise<Actor> {
@@ -155,8 +124,8 @@ async function main(): Promise<void> {
     branches: [{ code: BRANCH_CODE, name: 'Main Branch' }],
     users: [],
     loanProducts: [
-      { code: 'PERSONAL', name: 'Personal Loan', currency: 'UGX', active: true },
-      { code: 'BUSINESS_GROWTH', name: 'Business Growth Loan', currency: 'UGX', active: true },
+      { code: 'PERSONAL', name: 'Personal Loan', currency: 'UGX', active: true, annualRatePercent: 24, installments: 6, repaymentCycle: 'monthly' },
+      { code: 'BUSINESS_GROWTH', name: 'Business Growth Loan', currency: 'UGX', active: true, annualRatePercent: 20, installments: 12, repaymentCycle: 'monthly' },
     ],
   };
   await seedDatabase(productSeed, withTransaction, undefined);
@@ -217,17 +186,17 @@ async function main(): Promise<void> {
     const decision = await decideApplication(manager, application.id, { decision: 'approve', reason: 'Approved via seed-demo-domain-data script' });
     const loanId = decision.loanId!;
 
-    // Anchor the schedule in the past for the overdue scenario so the first
-    // installment is genuinely past due; otherwise anchor it at "now".
-    const anchor = spec.scenario === 'overdue' ? new Date(Date.now() - 45 * 24 * 60 * 60 * 1000) : new Date();
-    const schedule = buildAmortizationSchedule(spec.requestedAmount, PRODUCT_TERMS[spec.product], anchor);
-    await replaceLoanSchedule(loanId, schedule);
+    if (spec.scenario === 'overdue') {
+      const anchor = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
+      await backdateScheduleForOverdue(loanId, productIds[spec.product], spec.requestedAmount, anchor);
+    }
 
     await disburseLoan(officer, loanId, { disbursementReference: `SEED-DISB-${DEMO_RUN_TAG}-${spec.externalRef}`, idempotencyKey: randomUUID() });
     await transitionLoan(officer, loanId, 'active', 'Loan activated after disbursement');
     console.log(`  [${spec.displayName}] loan ${loanId} disbursed and activated`);
 
     if (spec.scenario === 'active') {
+      const schedule = await loadPersistedSchedule(loanId);
       const first = schedule[0];
       await postManualPayment({
         actorUserId: collector.dbUserId,
@@ -244,6 +213,7 @@ async function main(): Promise<void> {
       await transitionLoan(officer, loanId, 'overdue', 'First installment missed past its due date');
       console.log(`  [${spec.displayName}] flagged overdue — first installment is unpaid and past due`);
     } else if (spec.scenario === 'fully_paid') {
+      const schedule = await loadPersistedSchedule(loanId);
       for (const installment of schedule) {
         await postManualPayment({
           actorUserId: collector.dbUserId,
