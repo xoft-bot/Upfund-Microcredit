@@ -41,3 +41,12 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      - name: Deploy to Firebase Hosting
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_UPFUND_MICROCREDIT }}'
+          projectId: upfund-microcredit
+          channelId: live
