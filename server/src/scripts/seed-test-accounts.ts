@@ -1,7 +1,11 @@
 /**
- * One-off utility: creates (or reuses) the 4 standard test accounts in
+ * One-off utility: creates (or reuses) the 7 standard test accounts in
  * Firebase Auth, then upserts matching rows into Postgres via the
  * project's own validated seedDatabase() pipeline.
+ *
+ * The client-role account is special: it must be linked to a row in the
+ * clients table (SEED_CLIENT_ID_REQUIRED), so it's seeded in a second pass
+ * once that client profile exists.
  *
  * Usage:
  *   npx tsx server/src/scripts/seed-test-accounts.ts
@@ -27,10 +31,14 @@ const TEST_ACCOUNTS: TestAccountSpec[] = [
   { email: 'manager@upfund.test', password: 'TestPassword123!', role: 'manager', displayName: 'Branch Manager' },
   { email: 'officer@upfund.test', password: 'TestPassword123!', role: 'officer', displayName: 'Loan Officer' },
   { email: 'collector@upfund.test', password: 'TestPassword123!', role: 'collector', displayName: 'Field Collector' },
+  { email: 'accountant@upfund.test', password: 'TestPassword123!', role: 'accountant', displayName: 'Branch Accountant' },
+  { email: 'marketing@upfund.test', password: 'TestPassword123!', role: 'marketing', displayName: 'Marketing Analyst' },
+  { email: 'client@upfund.test', password: 'TestPassword123!', role: 'client', displayName: 'Test Borrower' },
 ];
 
 const BRANCH_CODE = 'MAIN';
 const BRANCH_NAME = 'Main Branch';
+const TEST_CLIENT_EXTERNAL_REF = 'TEST-CLIENT-001';
 
 async function getOrCreateFirebaseUser(auth: admin.auth.Auth, spec: TestAccountSpec): Promise<string> {
   try {
@@ -49,17 +57,29 @@ async function getOrCreateFirebaseUser(auth: admin.auth.Auth, spec: TestAccountS
   return created.uid;
 }
 
+async function getOrCreateTestClientId(branchId: string): Promise<string> {
+  const existing = await pool.query<{ id: string }>('SELECT id FROM clients WHERE external_ref = $1', [TEST_CLIENT_EXTERNAL_REF]);
+  if (existing.rowCount) return existing.rows[0].id;
+  const created = await pool.query<{ id: string }>(
+    `INSERT INTO clients (branch_id, external_ref, display_name) VALUES ($1, $2, $3) RETURNING id`,
+    [branchId, TEST_CLIENT_EXTERNAL_REF, 'Test Borrower'],
+  );
+  return created.rows[0].id;
+}
+
 async function main(): Promise<void> {
   console.log('Starting test account seeding...');
 
   const auth = getFirebaseApp().auth();
+  const clientSpec = TEST_ACCOUNTS.find((spec) => spec.role === 'client')!;
 
-  console.log('--- 1. Creating/looking up Firebase Auth users ---');
-  const users: SeedUser[] = [];
+  console.log('--- 1. Creating/looking up Firebase Auth users (non-client roles) ---');
+  const nonClientUsers: SeedUser[] = [];
   for (const spec of TEST_ACCOUNTS) {
+    if (spec.role === 'client') continue;
     const firebaseUid = await getOrCreateFirebaseUser(auth, spec);
     console.log(`  ${spec.email} -> ${firebaseUid}`);
-    users.push({
+    nonClientUsers.push({
       id: randomUUID(),
       firebaseUid,
       email: spec.email,
@@ -70,16 +90,41 @@ async function main(): Promise<void> {
     });
   }
 
-  console.log('--- 2. Seeding branch and users into Postgres ---');
+  console.log('--- 2. Seeding branch and non-client users into Postgres ---');
   const seedInput: SeedInput = {
     approved: true,
     branches: [{ code: BRANCH_CODE, name: BRANCH_NAME }],
-    users,
+    users: nonClientUsers,
     loanProducts: [],
   };
-
   const result = await seedDatabase(seedInput, withTransaction, undefined);
   console.log(`Seeded ${result.branches} branch(es) and ${result.users} user(s).`);
+
+  console.log('--- 3. Ensuring a test client profile exists, then seeding the client-role account ---');
+  const branchRow = await pool.query<{ id: string }>('SELECT id FROM branches WHERE code = $1', [BRANCH_CODE]);
+  if (!branchRow.rowCount) throw new Error(`BRANCH_NOT_FOUND: ${BRANCH_CODE}`);
+  const testClientId = await getOrCreateTestClientId(branchRow.rows[0].id);
+  console.log(`  Test client profile -> ${testClientId}`);
+
+  const clientFirebaseUid = await getOrCreateFirebaseUser(auth, clientSpec);
+  console.log(`  ${clientSpec.email} -> ${clientFirebaseUid}`);
+  const clientUserSeed: SeedInput = {
+    approved: true,
+    branches: [{ code: BRANCH_CODE, name: BRANCH_NAME }],
+    users: [{
+      id: randomUUID(),
+      firebaseUid: clientFirebaseUid,
+      email: clientSpec.email,
+      displayName: clientSpec.displayName,
+      role: 'client',
+      branchCode: BRANCH_CODE,
+      clientId: testClientId,
+      status: 'active',
+    }],
+    loanProducts: [],
+  };
+  const clientResult = await seedDatabase(clientUserSeed, withTransaction, undefined);
+  console.log(`  Seeded ${clientResult.users} client-role user(s), linked to client ${testClientId}.`);
 
   await pool.end();
   process.exit(0);
