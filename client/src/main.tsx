@@ -5,7 +5,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary.js';
 import { CollectorRouteView } from './components/field/CollectorRouteView.js';
 import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
 import { OfflineQueue, createPaymentSync } from './services/offlineQueue.js';
-import { getAssignedLoans, getCollectionQueue, getHealth, getReconciliationQueue, getSession, type AssignedLoanOption, type CollectionRecordResult, type ReconciliationQueueBatch } from './services/api.js';
+import { ApiRequestError, getAssignedLoans, getCollectionQueue, getHealth, getReconciliationQueue, getSession, type AssignedLoanOption, type CollectionRecordResult, type ReconciliationQueueBatch } from './services/api.js';
 import { getFirebaseIdToken, signOutFirebase, subscribeToFirebaseAuth, type AuthIdentity, type AuthSession } from './services/firebase.js';
 import { telemetry } from './services/telemetry.js';
 import type { FieldCollectionRecord, QueueMetrics, QueueSnapshot } from './types/field-ops.js';
@@ -18,6 +18,7 @@ const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
 const LazyManagerVarianceDashboard = lazy(async () => { const module = await import('./components/field/ManagerVarianceDashboard.js'); return { default: module.ManagerVarianceDashboard }; });
 const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
 const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0 };
+const COLLECTION_QUEUE_ROLES = ['admin', 'manager', 'officer', 'collector'];
 
 function getDeviceId(): string {
   const key = 'letsgrow-field-ops-device-id';
@@ -109,8 +110,10 @@ function App() {
         setIdentity(nextIdentity);
         setIdentityError('');
         await queue.retry();
-        const collections = await getCollectionQueue(token);
-        if (active) setServerRecords(collections.records.map(serverRecordToFieldRecord));
+        if (COLLECTION_QUEUE_ROLES.includes(nextIdentity.role)) {
+          const collections = await getCollectionQueue(token);
+          if (active) setServerRecords(collections.records.map(serverRecordToFieldRecord));
+        } else if (active) setServerRecords([]);
         if (['collector', 'officer'].includes(nextIdentity.role)) {
           const assigned = await getAssignedLoans(token);
           if (active) setAssignedLoans(assigned.loans);
@@ -120,7 +123,16 @@ function App() {
           if (active) setReconciliationBatches(reconciliations.batches);
         } else if (active) setReconciliationBatches([]);
       } catch (error) {
-        if (active) { setIdentity(null); setIdentityError(error instanceof Error && error.message === 'USER_NOT_FOUND' ? 'Your Firebase account is not mapped to an active Upfund account.' : 'Could not load your authorized workspace. Check your connection and try again.'); setServerRecords([]); setReconciliationBatches([]); setAssignedLoans([]); }
+        if (active) {
+          setIdentity(null);
+          setIdentityError(
+            error instanceof ApiRequestError && error.code === 'USER_NOT_FOUND' ? 'Your Firebase account is not mapped to an active Upfund account.'
+              : error instanceof ApiRequestError && error.code === 'BRANCH_REQUIRED' ? 'Your account has no branch assigned, so this workspace cannot load.'
+                : error instanceof ApiRequestError && error.code === 'FORBIDDEN' ? 'Your account does not have permission to view this data.'
+                  : 'Could not load your authorized workspace. Check your connection and try again.'
+          );
+          setServerRecords([]); setReconciliationBatches([]); setAssignedLoans([]);
+        }
       } finally {
         if (active) setIdentityLoading(false);
       }
