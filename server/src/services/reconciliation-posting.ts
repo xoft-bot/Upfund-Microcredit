@@ -40,10 +40,13 @@ export async function postReconciliationBatch(input: ReconciliationPostInput): P
 async function postReconciliationBatchOnClient(client: DbClient, input: ReconciliationPostInput): Promise<ReconciliationPostResult> {
   const result = calculateReconciliation(input);
   const reason = input.decisionReason?.trim() ?? '';
-  if (result.status === 'variance' && input.decision !== 'reject' && (!input.managerOverride || !['admin', 'manager'].includes(input.actorRole))) throw new Error('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');
-  if (result.status === 'variance' && !['admin', 'manager'].includes(input.actorRole)) throw new Error('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');
-  if (result.status === 'variance' && !input.decision) throw new Error('RECONCILIATION_DECISION_REQUIRED');
-  if (result.status === 'variance' && !reason) throw new Error('RECONCILIATION_DECISION_REASON_REQUIRED');
+  const isVariance = result.status === 'variance';
+  // A variance is handled in two steps by two different people: a submission (no decision)
+  // that holds the batch for review, then a decision recorded by someone other than the submitter.
+  const isDecision = isVariance && input.decision !== undefined;
+  if (isVariance && !['admin', 'manager'].includes(input.actorRole)) throw new Error('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');
+  if (isDecision && input.decision === 'approve' && !input.managerOverride) throw new Error('RECONCILIATION_VARIANCE_REQUIRES_MANAGER_OVERRIDE');
+  if (isDecision && !reason) throw new Error('RECONCILIATION_DECISION_REASON_REQUIRED');
 
   const existingResult = await client.query<{
     id: string;
@@ -76,10 +79,17 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     if (['matched', 'approved', 'rejected'].includes(existing.status)) {
       return { reconciliationId: existing.id, status: existing.status, variance: Number(existing.variance), created: false, decisionReason: existing.decision_reason };
     }
+    // Re-submitting a batch that is already held for review changes nothing.
+    if (isVariance && !isDecision) {
+      return { reconciliationId: existing.id, status: existing.status, variance: Number(existing.variance), created: false };
+    }
     reconciliationId = existing.id;
     isRetryOfNonTerminalBatch = true;
     existingSubmittedBy = existing.submitted_by;
   } else {
+    // A decision needs a batch somebody else already submitted. Deciding a batch that this
+    // very call would create makes the decider its submitter, which is self-approval.
+    if (isDecision) throw new Error('RECONCILIATION_SELF_APPROVAL');
     await client.query('SAVEPOINT reconciliation_batch_insert');
     try {
       const reconciliation = await client.query<{ id: string }>(
@@ -110,6 +120,9 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
       if (['matched', 'approved', 'rejected'].includes(concurrent.status)) {
         return { reconciliationId: concurrent.id, status: concurrent.status, variance: Number(concurrent.variance), created: false, decisionReason: concurrent.decision_reason };
       }
+      if (isVariance && !isDecision) {
+        return { reconciliationId: concurrent.id, status: concurrent.status, variance: Number(concurrent.variance), created: false };
+      }
       reconciliationId = concurrent.id;
       isRetryOfNonTerminalBatch = true;
       existingSubmittedBy = concurrent.submitted_by;
@@ -117,12 +130,9 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     }
   }
 
-  // Bug #3 fix: a batch left in a non-terminal state (pending/variance) can only be
-  // decided by someone other than whoever originally submitted it. This does NOT
-  // fire on a brand-new batch's own inline submit+decide call (the current API
-  // design requires the decision in that same call), only when a *different*,
-  // later call is recording the decision on a pre-existing non-terminal row.
-  if (isRetryOfNonTerminalBatch && existingSubmittedBy === input.actorUserId && (input.decision === 'reject' || result.status === 'variance')) {
+  // Segregation of duties: whoever submitted a batch cannot decide it. A decision on a batch that
+  // does not exist yet was already rejected above, so here the row is always a pre-existing one.
+  if (isDecision && existingSubmittedBy === input.actorUserId) {
     throw new Error('RECONCILIATION_SELF_APPROVAL');
   }
 
@@ -132,16 +142,25 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
   // and a payment already reconciled elsewhere silently no-ops (via the
   // ON CONFLICT below) instead of surfacing an error — undercounting totals
   // with no signal to the caller.
-  if (input.paymentIds.length) {
-    const paymentCheck = await client.query<{ id: string }>(
-      `SELECT id FROM payments WHERE id = ANY($1::uuid[]) AND branch_id = $2`,
-      [input.paymentIds, input.branchId],
+  // A repeated id must neither trip the count check below nor be able to inflate a total.
+  const paymentIds = [...new Set(input.paymentIds)];
+  if (paymentIds.length) {
+    const paymentCheck = await client.query<{ id: string; amount: string }>(
+      `SELECT id, amount FROM payments WHERE id = ANY($1::uuid[]) AND branch_id = $2`,
+      [paymentIds, input.branchId],
     );
-    if (paymentCheck.rowCount !== input.paymentIds.length) throw new Error('RECONCILIATION_PAYMENT_INVALID');
+    if (paymentCheck.rowCount !== paymentIds.length) throw new Error('RECONCILIATION_PAYMENT_INVALID');
+
+    // recordedAmount is what the ledger transfers from cash.manual to cash.reconciled, so it
+    // must equal the stored total of the attached payments, never a caller-supplied figure.
+    // (expectedAmount is schedule-derived and submittedAmount is the collector's own count;
+    // both legitimately differ from the payment total and are what the variance measures.)
+    const attachedTotal = paymentCheck.rows.reduce((sum, row) => sum + Number(row.amount), 0);
+    if (attachedTotal !== result.recordedAmount) throw new Error('RECONCILIATION_RECORDED_AMOUNT_MISMATCH');
 
     const alreadyReconciled = await client.query<{ payment_id: string }>(
       `SELECT payment_id FROM reconciliation_payments WHERE payment_id = ANY($1::uuid[]) AND reconciliation_id != $2`,
-      [input.paymentIds, reconciliationId],
+      [paymentIds, reconciliationId],
     );
     if (alreadyReconciled.rowCount) throw new Error('RECONCILIATION_PAYMENT_ALREADY_RECONCILED');
   } else if (!(result.status === 'variance' && input.decision === 'reject')) {
@@ -152,11 +171,24 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     throw new Error('RECONCILIATION_NO_PAYMENTS');
   }
 
-  for (const paymentId of input.paymentIds) {
+  for (const paymentId of paymentIds) {
     await client.query('INSERT INTO reconciliation_payments (reconciliation_id, payment_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [reconciliationId, paymentId]);
   }
 
-  if (result.status === 'variance' && input.decision === 'reject') {
+  if (isVariance && !isDecision) {
+    await insertAuditEvent(client, {
+      actorUserId: input.actorUserId,
+      action: 'reconciliation.batch.submitted_for_review',
+      entityType: 'reconciliation',
+      entityId: reconciliationId,
+      branchId: input.branchId,
+      correlationId: input.correlationId,
+      metadata: { batchReference: input.batchReference, variance: result.variance },
+    });
+    return { reconciliationId, status: 'variance', variance: result.variance, created: true };
+  }
+
+  if (isVariance && input.decision === 'reject') {
     await client.query(`UPDATE reconciliations SET status = 'rejected', decision_reason = $1, reviewed_by = $2, reviewed_at = now() WHERE id = $3`, [reason, input.actorUserId, reconciliationId]);
     await insertAuditEvent(client, {
       actorUserId: input.actorUserId,

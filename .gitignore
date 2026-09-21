@@ -10,3 +10,4 @@ attached_assets/*firebase-adminsdk*.json
 coverage/
 *.log
 .DS_Store
+.firebase/
