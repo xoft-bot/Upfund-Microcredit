@@ -62,6 +62,7 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     [input.batchReference],
   );
   let reconciliationId: string;
+  let isRetryOfNonTerminalBatch = false;
   if (existingResult.rowCount) {
     const existing = existingResult.rows[0];
     const sameFacts = existing.branch_id === input.branchId
@@ -74,13 +75,42 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
       return { reconciliationId: existing.id, status: existing.status, variance: Number(existing.variance), created: false, decisionReason: existing.decision_reason };
     }
     reconciliationId = existing.id;
+    isRetryOfNonTerminalBatch = true;
   } else {
-    const reconciliation = await client.query<{ id: string }>(
-      `INSERT INTO reconciliations (branch_id, batch_reference, expected_amount, recorded_amount, submitted_amount, variance, status, submitted_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::reconciliation_status, $8) RETURNING id`,
-      [input.branchId, input.batchReference, result.expectedAmount, result.recordedAmount, result.submittedAmount, result.variance, result.status, input.actorUserId],
-    );
-    reconciliationId = reconciliation.rows[0].id;
+    await client.query('SAVEPOINT reconciliation_batch_insert');
+    try {
+      const reconciliation = await client.query<{ id: string }>(
+        `INSERT INTO reconciliations (branch_id, batch_reference, expected_amount, recorded_amount, submitted_amount, variance, status, submitted_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::reconciliation_status, $8) RETURNING id`,
+        [input.branchId, input.batchReference, result.expectedAmount, result.recordedAmount, result.submittedAmount, result.variance, result.status, input.actorUserId],
+      );
+      reconciliationId = reconciliation.rows[0].id;
+      await client.query('RELEASE SAVEPOINT reconciliation_batch_insert');
+    } catch (error) {
+      if ((error as { code?: string }).code !== '23505') throw error;
+      await client.query('ROLLBACK TO SAVEPOINT reconciliation_batch_insert');
+      const concurrentResult = await client.query<typeof existingResult.rows[number]>(
+        `SELECT id, branch_id, expected_amount, recorded_amount, submitted_amount, variance, status, decision_reason
+           FROM reconciliations
+          WHERE batch_reference = $1
+          FOR UPDATE`,
+        [input.batchReference],
+      );
+      if (!concurrentResult.rowCount) throw error;
+      const concurrent = concurrentResult.rows[0];
+      const sameFacts = concurrent.branch_id === input.branchId
+        && Number(concurrent.expected_amount) === result.expectedAmount
+        && Number(concurrent.recorded_amount) === result.recordedAmount
+        && Number(concurrent.submitted_amount) === result.submittedAmount
+        && Number(concurrent.variance) === result.variance;
+      if (!sameFacts) throw new Error('RECONCILIATION_BATCH_STALE');
+      if (['matched', 'approved', 'rejected'].includes(concurrent.status)) {
+        return { reconciliationId: concurrent.id, status: concurrent.status, variance: Number(concurrent.variance), created: false, decisionReason: concurrent.decision_reason };
+      }
+      reconciliationId = concurrent.id;
+      isRetryOfNonTerminalBatch = true;
+      await client.query('RELEASE SAVEPOINT reconciliation_batch_insert');
+    }
   }
   for (const paymentId of input.paymentIds) {
     await client.query('INSERT INTO reconciliation_payments (reconciliation_id, payment_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [reconciliationId, paymentId]);
@@ -153,12 +183,17 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
       ...(allocation.retainedProfit > 0 ? [{ accountCode: 'retained.profit', side: 'credit' as const, amount: allocation.retainedProfit }] : []),
     ],
   });
+  if (isRetryOfNonTerminalBatch && !ledger.created) {
+    return { reconciliationId, status, variance: result.variance, created: false, ledgerTransactionId: ledger.transactionId, decisionReason: result.status === 'variance' ? reason : null };
+  }
   const amounts = new Map<Pool['pool_type'], number>([['credit_loss_reserve', allocation.creditLossReserve], ['operating_reserve', allocation.operatingReserve], ['collection', allocation.collectionCost], ['growth', allocation.growthCapital]]);
   for (const pool of pools.rows) {
     const amount = amounts.get(pool.pool_type) ?? 0;
     if (amount > 0) {
-      await client.query('UPDATE capital_pools SET balance = balance + $1, version = version + 1 WHERE id = $2', [amount, pool.id]);
-      await client.query('INSERT INTO pool_allocations (ledger_transaction_id, capital_pool_id, amount, policy_version) VALUES ($1, $2, $3, $4)', [ledger.transactionId, pool.id, amount, policy.version]);
+      const allocationInsert = await client.query('INSERT INTO pool_allocations (ledger_transaction_id, capital_pool_id, amount, policy_version) VALUES ($1, $2, $3, $4) ON CONFLICT (ledger_transaction_id, capital_pool_id) DO NOTHING', [ledger.transactionId, pool.id, amount, policy.version]);
+      if (allocationInsert.rowCount) {
+        await client.query('UPDATE capital_pools SET balance = balance + $1, version = version + 1 WHERE id = $2', [amount, pool.id]);
+      }
     }
   }
   await insertAuditEvent(client, {
