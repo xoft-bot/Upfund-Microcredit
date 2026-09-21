@@ -1,0 +1,35 @@
+export async function resolveDatabaseUser(decodedToken: DecodedIdToken) {
+  const { uid, email, email_verified } = decodedToken;
+
+  // 1. Primary Lookup: Match directly by Firebase UID
+  let user = await db.query(
+    `SELECT * FROM users WHERE firebase_uid = $1 AND status = 'active'`,
+    [uid]
+  );
+
+  if (user.rows.length > 0) {
+    return user.rows[0];
+  }
+
+  // 2. Provisioning Fallback: Only match by email if email_verified is TRUE
+  if (email && email_verified) {
+    user = await db.query(
+      `SELECT * FROM users WHERE lower(email) = lower($1) AND status = 'active'`,
+      [email]
+    );
+
+    if (user.rows.length > 0) {
+      const foundUser = user.rows[0];
+
+      // Bind the Firebase UID immediately so subsequent requests hit step 1 directly
+      await db.query(
+        `UPDATE users SET firebase_uid = $1 WHERE id = $2`,
+        [uid, foundUser.id]
+      );
+
+      return foundUser;
+    }
+  }
+
+  return null;
+}
