@@ -166,9 +166,9 @@ suite('Stage 2 atomic payment and reconciliation', () => {
         paymentMethod: 'cash',
         correlationId: randomUUID(),
       });
-      const reconciliation = await postReconciliationBatch({
+      const reconciliationInput = {
         actorUserId: userId,
-        actorRole: 'manager',
+        actorRole: 'manager' as const,
         branchId,
         batchReference: `matched-${randomUUID()}`,
         expectedAmount: 135_000,
@@ -178,11 +178,20 @@ suite('Stage 2 atomic payment and reconciliation', () => {
         policyVersion,
         managerOverride: false,
         correlationId: randomUUID(),
-      });
+      };
+      const [reconciliation, concurrentRetry] = await Promise.all([
+        postReconciliationBatch(reconciliationInput),
+        postReconciliationBatch(reconciliationInput),
+      ]);
       expect(reconciliation.allocation?.realizedCharge).toBe(25_000);
+      expect(concurrentRetry.reconciliationId).toBe(reconciliation.reconciliationId);
+      const sequentialRetry = await postReconciliationBatch({ ...reconciliationInput, correlationId: randomUUID() });
+      expect(sequentialRetry).toMatchObject({ reconciliationId: reconciliation.reconciliationId, status: 'matched', created: false });
       const allocated = await pool!.query<{ total: string }>('SELECT COALESCE(SUM(amount), 0) AS total FROM pool_allocations WHERE ledger_transaction_id = $1', [reconciliation.ledgerTransactionId]);
       expect(allocated.rows[0].total).toBe('25000');
       expect(allocated.rows[0].total).not.toBe('135000');
+      const allocationRows = await pool!.query<{ count: string }>('SELECT COUNT(*) AS count FROM pool_allocations WHERE ledger_transaction_id = $1', [reconciliation.ledgerTransactionId]);
+      expect(allocationRows.rows[0].count).toBe('4');
     } finally {
       await client.query('ROLLBACK').catch(() => undefined);
       client.release();
