@@ -271,4 +271,180 @@ suite('Stage 2 atomic payment and reconciliation', () => {
       client.release();
     }
   });
+
+  it('rejects a payment that belongs to a different branch', async () => {
+    const client = await pool!.connect();
+    const otherBranchId = randomUUID();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    const scheduleId = randomUUID();
+    const policyVersion = `policy-${randomUUID()}`;
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO branches (id, code, name) VALUES ($1, $2, 'Other Branch')`, [otherBranchId, `OTHER-${randomUUID().slice(0, 8)}`]);
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Other Branch Client')`, [clientId, otherBranchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Other Branch Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, otherBranchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, otherBranchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE, 100000, 0)`, [scheduleId, loanId]);
+      await client.query(`INSERT INTO allocation_policies (version, credit_loss_bps, operating_bps, collection_bps, growth_bps, effective_from) VALUES ($1, 2500, 2500, 2500, 2500, now())`, [policyVersion]);
+      await client.query('COMMIT');
+
+      // Payment genuinely belongs to otherBranchId, but we try to reconcile it
+      // into the suite's own `branchId` — this must be rejected, not silently
+      // aggregated into the wrong branch's pools.
+      const payment = await postManualPayment({ actorUserId: userId, loanId, branchId: otherBranchId, clientId, amount: 5000, idempotencyKey: `payment-${loanId}`, correlationId: randomUUID() });
+
+      await expect(postReconciliationBatch({
+        actorUserId: userId,
+        actorRole: 'manager' as const,
+        branchId, // the suite's own branch, NOT otherBranchId
+        batchReference: `cross-branch-${randomUUID()}`,
+        expectedAmount: 5000,
+        recordedAmount: 5000,
+        submittedAmount: 5000,
+        paymentIds: [payment.paymentId],
+        policyVersion,
+        managerOverride: false,
+        correlationId: randomUUID(),
+      })).rejects.toThrow('RECONCILIATION_PAYMENT_INVALID');
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it('rejects a payment already attached to a different reconciliation batch', async () => {
+    const client = await pool!.connect();
+    const dupBranchId = randomUUID();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    const scheduleId = randomUUID();
+    const policyVersion = `policy-${randomUUID()}`;
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO branches (id, code, name) VALUES ($1, $2, 'Dup Branch')`, [dupBranchId, `DUP-${randomUUID().slice(0, 8)}`]);
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Dup Client')`, [clientId, dupBranchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Dup Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, dupBranchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, dupBranchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE, 100000, 0)`, [scheduleId, loanId]);
+      for (const poolType of ['credit_loss_reserve', 'operating_reserve', 'collection', 'growth']) {
+        await client.query(`INSERT INTO capital_pools (branch_id, pool_type, balance) VALUES ($1, $2::pool_type, 0)`, [dupBranchId, poolType]);
+      }
+      await client.query(`INSERT INTO allocation_policies (version, credit_loss_bps, operating_bps, collection_bps, growth_bps, effective_from) VALUES ($1, 2500, 2500, 2500, 2500, now())`, [policyVersion]);
+      await client.query('COMMIT');
+
+      const payment = await postManualPayment({ actorUserId: userId, loanId, branchId: dupBranchId, clientId, amount: 5000, idempotencyKey: `payment-${loanId}`, correlationId: randomUUID() });
+
+      const firstBatch = {
+        actorUserId: userId,
+        actorRole: 'manager' as const,
+        branchId: dupBranchId,
+        batchReference: `dup-first-${randomUUID()}`,
+        expectedAmount: 5000,
+        recordedAmount: 5000,
+        submittedAmount: 5000,
+        paymentIds: [payment.paymentId],
+        policyVersion,
+        managerOverride: false,
+        correlationId: randomUUID(),
+      };
+      const first = await postReconciliationBatch(firstBatch);
+      expect(first.status).toBe('matched');
+
+      // Same payment, a brand-new batchReference — must not silently
+      // no-op the attach and proceed; it should reject outright.
+      await expect(postReconciliationBatch({
+        ...firstBatch,
+        batchReference: `dup-second-${randomUUID()}`,
+        correlationId: randomUUID(),
+      })).rejects.toThrow('RECONCILIATION_PAYMENT_ALREADY_RECONCILED');
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it('rejects a matched/approved batch submitted with zero payments', async () => {
+    const policyVersion = `policy-${randomUUID()}`;
+    await pool!.query(`INSERT INTO allocation_policies (version, credit_loss_bps, operating_bps, collection_bps, growth_bps, effective_from) VALUES ($1, 2500, 2500, 2500, 2500, now())`, [policyVersion]);
+    await expect(postReconciliationBatch({
+      actorUserId: userId,
+      actorRole: 'manager' as const,
+      branchId,
+      batchReference: `no-payments-${randomUUID()}`,
+      expectedAmount: 5000,
+      recordedAmount: 5000,
+      submittedAmount: 5000,
+      paymentIds: [],
+      policyVersion,
+      managerOverride: false,
+      correlationId: randomUUID(),
+    })).rejects.toThrow('RECONCILIATION_NO_PAYMENTS');
+  });
+
+  it('rejects a self-approval when a different call later decides a non-terminal batch the same user submitted', async () => {
+    const client = await pool!.connect();
+    const selfApprovalBranchId = randomUUID();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    const scheduleId = randomUUID();
+    const policyVersion = `policy-${randomUUID()}`;
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO branches (id, code, name) VALUES ($1, $2, 'Self Approval Branch')`, [selfApprovalBranchId, `SELF-${randomUUID().slice(0, 8)}`]);
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Self Approval Client')`, [clientId, selfApprovalBranchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Self Approval Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, selfApprovalBranchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, selfApprovalBranchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE, 100000, 0)`, [scheduleId, loanId]);
+      for (const poolType of ['credit_loss_reserve', 'operating_reserve', 'collection', 'growth']) {
+        await client.query(`INSERT INTO capital_pools (branch_id, pool_type, balance) VALUES ($1, $2::pool_type, 0)`, [selfApprovalBranchId, poolType]);
+      }
+      await client.query(`INSERT INTO allocation_policies (version, credit_loss_bps, operating_bps, collection_bps, growth_bps, effective_from) VALUES ($1, 2500, 2500, 2500, 2500, now())`, [policyVersion]);
+      await client.query('COMMIT');
+
+      const payment = await postManualPayment({ actorUserId: userId, loanId, branchId: selfApprovalBranchId, clientId, amount: 5000, idempotencyKey: `payment-${loanId}`, correlationId: randomUUID() });
+
+      const batchReference = `self-approval-${randomUUID()}`;
+      // Land the batch in a non-terminal state directly (simulating a crash
+      // recovery / migration path that leaves a row pending, per the batch
+      // status the audit itself flagged as the only route to non-terminal —
+      // insert directly rather than going through the service, since
+      // calculateReconciliation never itself returns 'pending').
+      await pool!.query(
+        `INSERT INTO reconciliations (branch_id, batch_reference, expected_amount, recorded_amount, submitted_amount, variance, status, submitted_by)
+         VALUES ($1, $2, 5000, 4000, 4000, -1000, 'pending', $3)`,
+        [selfApprovalBranchId, batchReference, userId],
+      );
+
+      // Same user who "submitted_by" now tries to record the decision on
+      // this pre-existing non-terminal batch — must be rejected.
+      await expect(postReconciliationBatch({
+        actorUserId: userId,
+        actorRole: 'manager' as const,
+        branchId: selfApprovalBranchId,
+        batchReference,
+        expectedAmount: 5000,
+        recordedAmount: 4000,
+        submittedAmount: 4000,
+        paymentIds: [payment.paymentId],
+        policyVersion,
+        managerOverride: true,
+        decision: 'reject',
+        decisionReason: 'Cash count requires correction.',
+        correlationId: randomUUID(),
+      })).rejects.toThrow('RECONCILIATION_SELF_APPROVAL');
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
 });

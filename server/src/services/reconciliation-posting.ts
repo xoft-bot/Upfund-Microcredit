@@ -54,8 +54,9 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     variance: string;
     status: 'pending' | 'matched' | 'variance' | 'approved' | 'rejected';
     decision_reason: string | null;
+    submitted_by: string;
   }>(
-    `SELECT id, branch_id, expected_amount, recorded_amount, submitted_amount, variance, status, decision_reason
+    `SELECT id, branch_id, expected_amount, recorded_amount, submitted_amount, variance, status, decision_reason, submitted_by
        FROM reconciliations
       WHERE batch_reference = $1
       FOR UPDATE`,
@@ -63,6 +64,7 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
   );
   let reconciliationId: string;
   let isRetryOfNonTerminalBatch = false;
+  let existingSubmittedBy: string | null = null;
   if (existingResult.rowCount) {
     const existing = existingResult.rows[0];
     const sameFacts = existing.branch_id === input.branchId
@@ -76,6 +78,7 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
     }
     reconciliationId = existing.id;
     isRetryOfNonTerminalBatch = true;
+    existingSubmittedBy = existing.submitted_by;
   } else {
     await client.query('SAVEPOINT reconciliation_batch_insert');
     try {
@@ -90,7 +93,7 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
       if ((error as { code?: string }).code !== '23505') throw error;
       await client.query('ROLLBACK TO SAVEPOINT reconciliation_batch_insert');
       const concurrentResult = await client.query<typeof existingResult.rows[number]>(
-        `SELECT id, branch_id, expected_amount, recorded_amount, submitted_amount, variance, status, decision_reason
+        `SELECT id, branch_id, expected_amount, recorded_amount, submitted_amount, variance, status, decision_reason, submitted_by
            FROM reconciliations
           WHERE batch_reference = $1
           FOR UPDATE`,
@@ -109,9 +112,46 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
       }
       reconciliationId = concurrent.id;
       isRetryOfNonTerminalBatch = true;
+      existingSubmittedBy = concurrent.submitted_by;
       await client.query('RELEASE SAVEPOINT reconciliation_batch_insert');
     }
   }
+
+  // Bug #3 fix: a batch left in a non-terminal state (pending/variance) can only be
+  // decided by someone other than whoever originally submitted it. This does NOT
+  // fire on a brand-new batch's own inline submit+decide call (the current API
+  // design requires the decision in that same call), only when a *different*,
+  // later call is recording the decision on a pre-existing non-terminal row.
+  if (isRetryOfNonTerminalBatch && existingSubmittedBy === input.actorUserId && (input.decision === 'reject' || result.status === 'variance')) {
+    throw new Error('RECONCILIATION_SELF_APPROVAL');
+  }
+
+  // Bug #2 fix: validate every paymentId exists, belongs to this branch, and
+  // isn't already attached to a different reconciliation batch. Without this,
+  // a cross-branch payment silently realizes into the wrong branch's pools,
+  // and a payment already reconciled elsewhere silently no-ops (via the
+  // ON CONFLICT below) instead of surfacing an error — undercounting totals
+  // with no signal to the caller.
+  if (input.paymentIds.length) {
+    const paymentCheck = await client.query<{ id: string }>(
+      `SELECT id FROM payments WHERE id = ANY($1::uuid[]) AND branch_id = $2`,
+      [input.paymentIds, input.branchId],
+    );
+    if (paymentCheck.rowCount !== input.paymentIds.length) throw new Error('RECONCILIATION_PAYMENT_INVALID');
+
+    const alreadyReconciled = await client.query<{ payment_id: string }>(
+      `SELECT payment_id FROM reconciliation_payments WHERE payment_id = ANY($1::uuid[]) AND reconciliation_id != $2`,
+      [input.paymentIds, reconciliationId],
+    );
+    if (alreadyReconciled.rowCount) throw new Error('RECONCILIATION_PAYMENT_ALREADY_RECONCILED');
+  } else if (!(result.status === 'variance' && input.decision === 'reject')) {
+    // Minor fix: a matched/approved batch with zero payments would otherwise
+    // post a pure cash transfer with no realized allocation and no error.
+    // Rejection is the one legitimate zero-payment case (nothing to attach
+    // to a batch that's being kicked back).
+    throw new Error('RECONCILIATION_NO_PAYMENTS');
+  }
+
   for (const paymentId of input.paymentIds) {
     await client.query('INSERT INTO reconciliation_payments (reconciliation_id, payment_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [reconciliationId, paymentId]);
   }
