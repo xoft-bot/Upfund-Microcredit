@@ -133,7 +133,7 @@ suite('Stage 2 atomic payment and reconciliation', () => {
     expect(result.rowCount).toBe(0);
   });
 
-  it('allocates reconciliation pools from realized charges only', async () => {
+  it('concurrent posts with a new batchReference resolve to a single reconciliation row', async () => {
     const client = await pool!.connect();
     const clientId = randomUUID();
     const productId = randomUUID();
@@ -183,8 +183,11 @@ suite('Stage 2 atomic payment and reconciliation', () => {
         postReconciliationBatch(reconciliationInput),
         postReconciliationBatch(reconciliationInput),
       ]);
+      const reconciliationRows = await pool!.query<{ id: string; status: string }>('SELECT id, status FROM reconciliations WHERE batch_reference = $1', [reconciliationInput.batchReference]);
+      expect(reconciliationRows.rowCount).toBe(1);
       expect(reconciliation.allocation?.realizedCharge).toBe(25_000);
       expect(concurrentRetry.reconciliationId).toBe(reconciliation.reconciliationId);
+      expect(concurrentRetry.status).toBe(reconciliation.status);
       const sequentialRetry = await postReconciliationBatch({ ...reconciliationInput, correlationId: randomUUID() });
       expect(sequentialRetry).toMatchObject({ reconciliationId: reconciliation.reconciliationId, status: 'matched', created: false });
       const allocated = await pool!.query<{ total: string }>('SELECT COALESCE(SUM(amount), 0) AS total FROM pool_allocations WHERE ledger_transaction_id = $1', [reconciliation.ledgerTransactionId]);
@@ -221,5 +224,51 @@ suite('Stage 2 atomic payment and reconciliation', () => {
     expect(stored.rows[0]).toEqual({ status: 'rejected', decision_reason: input.decisionReason, reviewed_by: userId });
     const retry = await postReconciliationBatch({ ...input, correlationId: randomUUID() });
     expect(retry).toMatchObject({ status: 'rejected', created: false, decisionReason: input.decisionReason });
+  });
+
+  it('retrying a pending batch does not double-credit capital pools', async () => {
+    const client = await pool!.connect();
+    const retryBranchId = randomUUID();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    const scheduleId = randomUUID();
+    const policyVersion = `policy-${randomUUID()}`;
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO branches (id, code, name) VALUES ($1, $2, 'Retry Test Branch')`, [retryBranchId, `RETRY-${randomUUID().slice(0, 8)}`]);
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Retry Client')`, [clientId, retryBranchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Retry Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, retryBranchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, retryBranchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due, penalty_due, interest_due) VALUES ($1, $2, CURRENT_DATE, 100000, 25000, 5000, 20000)`, [scheduleId, loanId]);
+      for (const poolType of ['credit_loss_reserve', 'operating_reserve', 'collection', 'growth']) {
+        await client.query(`INSERT INTO capital_pools (branch_id, pool_type, balance) VALUES ($1, $2::pool_type, 0)`, [retryBranchId, poolType]);
+      }
+      await client.query(`INSERT INTO allocation_policies (version, credit_loss_bps, operating_bps, collection_bps, growth_bps, effective_from) VALUES ($1, 2500, 2500, 2500, 2500, now())`, [policyVersion]);
+      await client.query('COMMIT');
+
+      const payment = await postManualPayment({ actorUserId: userId, loanId, branchId: retryBranchId, clientId, amount: 135_000, idempotencyKey: `payment-${loanId}`, localId: `local-${randomUUID()}`, deviceId: 'device-retry', paymentMethod: 'cash', correlationId: randomUUID() });
+      const input = { actorUserId: userId, actorRole: 'manager' as const, branchId: retryBranchId, batchReference: `pending-${randomUUID()}`, expectedAmount: 135_000, recordedAmount: 135_000, submittedAmount: 135_000, paymentIds: [payment.paymentId], policyVersion, managerOverride: false, correlationId: randomUUID() };
+      const firstPost = await postReconciliationBatch(input);
+      expect(firstPost.status).toBe('matched');
+      await pool!.query(`UPDATE reconciliations SET status = 'pending' WHERE batch_reference = $1`, [input.batchReference]);
+      const poolRow = await pool!.query<{ id: string; balance: string }>(`SELECT id, balance FROM capital_pools WHERE branch_id = $1 AND pool_type = 'credit_loss_reserve'`, [retryBranchId]);
+      const allocationBefore = await pool!.query<{ count: string }>('SELECT COUNT(*) AS count FROM pool_allocations WHERE ledger_transaction_id = $1 AND capital_pool_id = $2', [firstPost.ledgerTransactionId, poolRow.rows[0].id]);
+      expect(Number(allocationBefore.rows[0].count)).toBe(1);
+
+      const retry = await postReconciliationBatch(input);
+      const retryAgain = await postReconciliationBatch({ ...input, correlationId: randomUUID() });
+      expect(retry.ledgerTransactionId).toBe(firstPost.ledgerTransactionId);
+      expect(retryAgain.ledgerTransactionId).toBe(firstPost.ledgerTransactionId);
+      const poolAfter = await pool!.query<{ balance: string }>('SELECT balance FROM capital_pools WHERE id = $1', [poolRow.rows[0].id]);
+      const allocationAfter = await pool!.query<{ count: string }>('SELECT COUNT(*) AS count FROM pool_allocations WHERE ledger_transaction_id = $1 AND capital_pool_id = $2', [firstPost.ledgerTransactionId, poolRow.rows[0].id]);
+      expect(Number(poolAfter.rows[0].balance)).toBe(Number(poolRow.rows[0].balance));
+      expect(Number(allocationAfter.rows[0].count)).toBe(1);
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
   });
 });
