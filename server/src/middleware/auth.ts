@@ -24,7 +24,20 @@ export type UserResolver = (firebaseUid: string, email?: string) => Promise<Auth
 
 export function createTokenVerifier(): TokenVerifier { return createConfiguredTokenVerifier(); }
 
-export async function resolveDatabaseUser(firebaseUid: string, email?: string): Promise<AuthenticatedUser | null> {
+export async function resolveDatabaseUser(firebaseUid: string, _email?: string): Promise<AuthenticatedUser | null> {
+  // SECURITY: match strictly on firebase_uid (NOT NULL UNIQUE, set once at
+  // row-creation time by an admin/seed process — see server/src/db/seed.ts).
+  // There is no "invited, not yet linked" state in this schema, so an email
+  // or raw-id fallback here has no legitimate use case and only creates an
+  // account-takeover vector: if a user's Firebase account is ever recreated
+  // or another Firebase account reuses their email, an email-based match
+  // would silently hand over the original account's role/branch/permissions
+  // to whoever now controls that email address, with no verification that
+  // they are actually the same person. Do not reintroduce email or raw-id
+  // matching here without a real, deliberate provisioning design (e.g. an
+  // explicit `pending_link` status plus an `email_verified` check plus an
+  // atomic bind-on-first-login step) — see the removed history of this
+  // function for the exact vulnerability that was here before.
   const result = await pool.query<{ db_user_id: string; firebase_uid: string; role: string; branch_id: string | null; client_id: string | null; permissions: string[] }>(
     `SELECT u.id AS db_user_id, u.firebase_uid, r.code AS role, u.branch_id, u.client_id,
             COALESCE(array_agg(p.code) FILTER (WHERE p.code IS NOT NULL), '{}') AS permissions
@@ -33,13 +46,9 @@ export async function resolveDatabaseUser(firebaseUid: string, email?: string): 
        LEFT JOIN role_permissions rp ON rp.role_id = r.id
        LEFT JOIN permissions p ON p.id = rp.permission_id
        WHERE u.status = 'active'
-         AND (
-           u.firebase_uid = $1
-           OR u.id::text = $1
-           OR ($2::text IS NOT NULL AND lower(u.email) = lower($2))
-         )
+         AND u.firebase_uid = $1
        GROUP BY u.id, u.firebase_uid, r.code, u.branch_id, u.client_id`,
-    [firebaseUid, email?.trim() || null],
+    [firebaseUid],
   );
   if (!result.rowCount) return null;
   const row = result.rows[0];
