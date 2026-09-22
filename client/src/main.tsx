@@ -17,7 +17,7 @@ const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
 const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
 const LazyManagerVarianceDashboard = lazy(async () => { const module = await import('./components/field/ManagerVarianceDashboard.js'); return { default: module.ManagerVarianceDashboard }; });
 const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
-const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0 };
+const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0, stale: 0 };
 const COLLECTION_QUEUE_ROLES = ['admin', 'manager', 'officer', 'collector'];
 
 function getDeviceId(): string {
@@ -98,6 +98,11 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    // Bind the offline queue's storage to whoever is currently authenticated
+    // (or the anonymous namespace on sign-out) before touching any queued
+    // records — see OfflineQueue.bindUser for why this matters on shared
+    // devices.
+    void queue.bindUser(session?.uid);
     if (!session) { setIdentity(null); setIdentityError(''); setServerRecords([]); setReconciliationBatches([]); setAssignedLoans([]); return () => { active = false; }; }
     setIdentityLoading(true);
     void (async () => {

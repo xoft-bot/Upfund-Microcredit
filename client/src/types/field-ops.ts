@@ -58,4 +58,5 @@ export interface QueueMetrics {
   syncing: number;
   rejected: number;
   conflict: number;
+  stale: number;
 }
