@@ -126,6 +126,62 @@ suite('Stage 2 atomic payment and reconciliation', () => {
     } finally { client.release(); }
   });
 
+  it('a payment covering two overdue installments clears both instead of stranding the second', async () => {
+    const client = await pool!.connect();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Catch-up Client')`, [clientId, branchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Catch-up Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
+      // Two overdue installments, both already due: 50,000 principal each, no penalty/interest.
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '60 days', 50000, 0)`, [randomUUID(), loanId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '30 days', 50000, 0)`, [randomUUID(), loanId]);
+      await client.query('COMMIT');
+
+      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount: 100000, idempotencyKey: `catchup-${loanId}`, correlationId: randomUUID() });
+      expect(result).toMatchObject({ principalAmount: 100000, overpaymentAmount: 0, outstandingPrincipal: 0, loanStatus: 'completed' });
+      const schedules = await pool!.query<{ due_on: string; principal_paid: string; status: string }>(`SELECT due_on, principal_paid, status FROM repayment_schedules WHERE loan_id = $1 ORDER BY due_on`, [loanId]);
+      expect(schedules.rows.map((row) => ({ principalPaid: Number(row.principal_paid), status: row.status }))).toEqual([
+        { principalPaid: 50000, status: 'paid' },
+        { principalPaid: 50000, status: 'paid' },
+      ]);
+      const holding = await pool!.query('SELECT 1 FROM overpayment_holdings WHERE loan_id = $1', [loanId]);
+      expect(holding.rowCount).toBe(0);
+    } finally { client.release(); }
+  });
+
+  it('a payment covering one full installment plus a partial second leaves the second correctly partial', async () => {
+    const client = await pool!.connect();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const loanId = randomUUID();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Partial Client')`, [clientId, branchId, `client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Partial Product')`, [productId, `product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '60 days', 50000, 0)`, [randomUUID(), loanId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '30 days', 50000, 0)`, [randomUUID(), loanId]);
+      await client.query('COMMIT');
+
+      // Pays the first installment fully (50,000) plus 20,000 toward the second — nothing left as overpayment.
+      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount: 70000, idempotencyKey: `partial-${loanId}`, correlationId: randomUUID() });
+      expect(result).toMatchObject({ principalAmount: 70000, overpaymentAmount: 0, outstandingPrincipal: 30000 });
+      const schedules = await pool!.query<{ due_on: string; principal_paid: string; status: string }>(`SELECT due_on, principal_paid, status FROM repayment_schedules WHERE loan_id = $1 ORDER BY due_on`, [loanId]);
+      expect(schedules.rows.map((row) => ({ principalPaid: Number(row.principal_paid), status: row.status }))).toEqual([
+        { principalPaid: 50000, status: 'paid' },
+        { principalPaid: 20000, status: 'open' },
+      ]);
+    } finally { client.release(); }
+  });
+
   it('rejects a variance submission that has no payments and rolls back the batch', async () => {
     const batch = `batch-${randomUUID()}`;
     await expect(postReconciliationBatch({ actorUserId: userId, actorRole: 'manager', branchId, batchReference: batch, expectedAmount: 100, recordedAmount: 90, submittedAmount: 80, paymentIds: [], policyVersion: 'v1', managerOverride: false, correlationId: randomUUID() })).rejects.toThrow('RECONCILIATION_NO_PAYMENTS');

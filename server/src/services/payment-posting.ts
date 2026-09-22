@@ -160,6 +160,11 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
     };
   }
 
+  // Every open installment is locked and walked in due-date order, so a payment that covers
+  // more than one overdue installment (a client catching up after missing several cycles)
+  // clears each one in turn instead of dumping everything but the first into overpayment
+  // holdings — money nobody ever applies forward, while the untouched installments keep
+  // showing as open/overdue despite having already been paid for.
   const schedule = await client.query<{
     id: string;
     principal_due: number;
@@ -173,17 +178,51 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
   }>(
     `SELECT id, principal_due, principal_paid, penalty_due, penalty_paid, interest_due, interest_paid, charge_due, charge_paid
        FROM repayment_schedules
-     WHERE loan_id = $1 AND status = 'open' ORDER BY due_on, id LIMIT 1 FOR UPDATE`, [input.loanId],
+     WHERE loan_id = $1 AND status = 'open' ORDER BY due_on, id FOR UPDATE`, [input.loanId],
   );
   if (!schedule.rowCount) throw new Error('NO_OPEN_REPAYMENT_SCHEDULE');
-  const installment = schedule.rows[0];
-  const principalRemaining = Math.max(Number(installment.principal_due) - Number(installment.principal_paid), 0);
-  const penaltyRemaining = Math.max(Number(installment.penalty_due) - Number(installment.penalty_paid), 0);
-  const hasExplicitComponents = Number(installment.penalty_due) > 0 || Number(installment.interest_due) > 0;
-  const interestDue = hasExplicitComponents ? Number(installment.interest_due) : Number(installment.charge_due);
-  const interestPaid = hasExplicitComponents ? Number(installment.interest_paid) : Number(installment.charge_paid);
-  const interestRemaining = Math.max(interestDue - interestPaid, 0);
-  const allocation = allocatePaymentWaterfall({ amount: input.amount, principalRemaining, penaltyRemaining, interestRemaining });
+
+  let remaining = input.amount;
+  let totalPrincipal = 0;
+  let totalPenalty = 0;
+  let totalInterest = 0;
+  const installmentUpdates: { id: string; principalAmount: number; penaltyAmount: number; interestAmount: number; chargeAmount: number; nowPaid: boolean }[] = [];
+  for (const installment of schedule.rows) {
+    if (remaining <= 0) break;
+    const principalRemaining = Math.max(Number(installment.principal_due) - Number(installment.principal_paid), 0);
+    const penaltyRemaining = Math.max(Number(installment.penalty_due) - Number(installment.penalty_paid), 0);
+    const hasExplicitComponents = Number(installment.penalty_due) > 0 || Number(installment.interest_due) > 0;
+    const interestDue = hasExplicitComponents ? Number(installment.interest_due) : Number(installment.charge_due);
+    const interestPaid = hasExplicitComponents ? Number(installment.interest_paid) : Number(installment.charge_paid);
+    const interestRemaining = Math.max(interestDue - interestPaid, 0);
+    if (principalRemaining === 0 && penaltyRemaining === 0 && interestRemaining === 0) continue;
+    const installmentAllocation = allocatePaymentWaterfall({ amount: remaining, principalRemaining, penaltyRemaining, interestRemaining });
+    totalPrincipal += installmentAllocation.principalAmount;
+    totalPenalty += installmentAllocation.penaltyAmount;
+    totalInterest += installmentAllocation.interestAmount;
+    installmentUpdates.push({
+      id: installment.id,
+      principalAmount: installmentAllocation.principalAmount,
+      penaltyAmount: installmentAllocation.penaltyAmount,
+      interestAmount: installmentAllocation.interestAmount,
+      chargeAmount: installmentAllocation.chargeAmount,
+      nowPaid: installmentAllocation.principalAmount >= principalRemaining
+        && installmentAllocation.penaltyAmount >= penaltyRemaining
+        && installmentAllocation.interestAmount >= interestRemaining,
+    });
+    remaining = installmentAllocation.overpaymentAmount;
+  }
+  // Only genuinely excess money — left over after every open installment on this loan is
+  // fully satisfied — becomes overpaymentAmount. Anything still owed on a later installment
+  // is money that installment needed, not a surplus.
+  const allocation = {
+    principalAmount: totalPrincipal,
+    penaltyAmount: totalPenalty,
+    interestAmount: totalInterest,
+    chargeAmount: totalPenalty + totalInterest,
+    overpaymentAmount: remaining,
+  };
+  const primaryInstallmentId = installmentUpdates[0]?.id ?? schedule.rows[0].id;
   const receiptReference = input.receiptReference ?? `RCT-${new Date().toISOString().replace(/[-:.TZ]/g, '')}-${randomUUID().slice(0, 8).toUpperCase()}`;
   const payment = await client.query<{ id: string }>(
     `INSERT INTO payments
@@ -204,7 +243,7 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
       allocation.interestAmount,
       allocation.chargeAmount,
       allocation.overpaymentAmount,
-      installment.id,
+      primaryInstallmentId,
     ],
   );
   const paymentId = payment.rows[0].id;
@@ -214,27 +253,21 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
       WHERE id = $2 AND outstanding_principal >= $1 RETURNING outstanding_principal, status`, [allocation.principalAmount, input.loanId],
   );
   if (!updated.rowCount) throw new Error('LOAN_BALANCE_GUARD_FAILED');
-  const scheduleUpdate = await client.query<{ principal_paid: number; penalty_paid: number; interest_paid: number; charge_paid: number }>(
-    `UPDATE repayment_schedules
-        SET principal_paid = principal_paid + $1,
-            penalty_paid = penalty_paid + $2,
-            interest_paid = interest_paid + $3,
-            charge_paid = charge_paid + $4,
-            status = $5
-      WHERE id = $6
-      RETURNING principal_paid, penalty_paid, interest_paid, charge_paid`,
-    [
-      allocation.principalAmount,
-      allocation.penaltyAmount,
-      allocation.interestAmount,
-      allocation.chargeAmount,
-      allocation.principalAmount >= principalRemaining
-        && allocation.penaltyAmount >= penaltyRemaining
-        && allocation.interestAmount >= interestRemaining ? 'paid' : 'open',
-      installment.id,
-    ],
-  );
-  if (!scheduleUpdate.rowCount) throw new Error('SCHEDULE_UPDATE_FAILED');
+  // One UPDATE per installment this payment actually touched (almost always one; more than
+  // one only when the payment covered a prior installment's shortfall too).
+  for (const update of installmentUpdates) {
+    const scheduleUpdate = await client.query(
+      `UPDATE repayment_schedules
+          SET principal_paid = principal_paid + $1,
+              penalty_paid = penalty_paid + $2,
+              interest_paid = interest_paid + $3,
+              charge_paid = charge_paid + $4,
+              status = $5
+        WHERE id = $6`,
+      [update.principalAmount, update.penaltyAmount, update.interestAmount, update.chargeAmount, update.nowPaid ? 'paid' : 'open', update.id],
+    );
+    if (!scheduleUpdate.rowCount) throw new Error('SCHEDULE_UPDATE_FAILED');
+  }
   const creditLines = [
     { accountCode: 'loan.principal', side: 'credit' as const, amount: allocation.principalAmount },
     { accountCode: 'realized.penalty', side: 'credit' as const, amount: allocation.penaltyAmount },
