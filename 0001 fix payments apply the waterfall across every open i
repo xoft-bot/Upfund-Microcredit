@@ -1,0 +1,470 @@
+From df46cabb16ee19d163120846e81d0c4f121675c0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 22 Sep 2026 05:20:28 +0000
+Subject: [PATCH] fix(payments): apply the waterfall across every open
+ installment, not just the first
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+payment-posting.ts fetched exactly one open schedule row (ORDER BY due_on,
+id LIMIT 1) and ran the entire payment against it. A payment covering more
+than one overdue installment only cleared the first: the remainder went to
+overpayment_holdings, which nothing ever reads back. The result: a client
+who paid everything owed still showed a still-open, still-overdue second
+installment, which the overdue-detection cron kept flagging.
+
+Reproduced live: two overdue 50,000 installments, one 100,000 payment.
+Before: installment 1 paid, installment 2 untouched, 50,000 stranded in
+overpayment_holdings. After: both installments paid, nothing held.
+
+Fix: lock every open installment for the loan (still one query, still one
+FOR UPDATE, same lock order every time so no new deadlock risk — verified
+under real concurrency) and walk the waterfall across them in due-date
+order, carrying the remainder from one installment into the next. Only
+money left over after every open installment is satisfied becomes
+overpaymentAmount. payments.schedule_id (nullable, no behavior elsewhere
+depends on it being exclusive) is set to the first installment touched,
+same as before for the common single-installment case.
+
+Adds two regression tests (full multi-installment catch-up, and a partial
+catch-up that leaves the second installment correctly partial) plus a
+concurrency check with two real concurrent catch-up payments.
+---
+ server/src/services/payment-posting.ts        | 95 +++++++++++++------
+ ...payment-reconciliation.integration.test.ts | 56 +++++++++++
+ 2 files changed, 120 insertions(+), 31 deletions(-)
+
+diff --git a/server/src/services/payment-posting.ts b/server/src/services/payment-posting.ts
+index ef34898..65dd380 100644
+--- a/server/src/services/payment-posting.ts
++++ b/server/src/services/payment-posting.ts
+@@ -160,6 +160,11 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+     };
+   }
+
++  // Every open installment is locked and walked in due-date order, so a payment that covers
++  // more than one overdue installment (a client catching up after missing several cycles)
++  // clears each one in turn instead of dumping everything but the first into overpayment
++  // holdings — money nobody ever applies forward, while the untouched installments keep
++  // showing as open/overdue despite having already been paid for.
+   const schedule = await client.query<{
+     id: string;
+     principal_due: number;
+@@ -173,17 +178,51 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+   }>(
+     `SELECT id, principal_due, principal_paid, penalty_due, penalty_paid, interest_due, interest_paid, charge_due, charge_paid
+        FROM repayment_schedules
+-     WHERE loan_id = $1 AND status = 'open' ORDER BY due_on, id LIMIT 1 FOR UPDATE`, [input.loanId],
++     WHERE loan_id = $1 AND status = 'open' ORDER BY due_on, id FOR UPDATE`, [input.loanId],
+   );
+   if (!schedule.rowCount) throw new Error('NO_OPEN_REPAYMENT_SCHEDULE');
+-  const installment = schedule.rows[0];
+-  const principalRemaining = Math.max(Number(installment.principal_due) - Number(installment.principal_paid), 0);
+-  const penaltyRemaining = Math.max(Number(installment.penalty_due) - Number(installment.penalty_paid), 0);
+-  const hasExplicitComponents = Number(installment.penalty_due) > 0 || Number(installment.interest_due) > 0;
+-  const interestDue = hasExplicitComponents ? Number(installment.interest_due) : Number(installment.charge_due);
+-  const interestPaid = hasExplicitComponents ? Number(installment.interest_paid) : Number(installment.charge_paid);
+-  const interestRemaining = Math.max(interestDue - interestPaid, 0);
+-  const allocation = allocatePaymentWaterfall({ amount: input.amount, principalRemaining, penaltyRemaining, interestRemaining });
++
++  let remaining = input.amount;
++  let totalPrincipal = 0;
++  let totalPenalty = 0;
++  let totalInterest = 0;
++  const installmentUpdates: { id: string; principalAmount: number; penaltyAmount: number; interestAmount: number; chargeAmount: number; nowPaid: boolean }[] = [];
++  for (const installment of schedule.rows) {
++    if (remaining <= 0) break;
++    const principalRemaining = Math.max(Number(installment.principal_due) - Number(installment.principal_paid), 0);
++    const penaltyRemaining = Math.max(Number(installment.penalty_due) - Number(installment.penalty_paid), 0);
++    const hasExplicitComponents = Number(installment.penalty_due) > 0 || Number(installment.interest_due) > 0;
++    const interestDue = hasExplicitComponents ? Number(installment.interest_due) : Number(installment.charge_due);
++    const interestPaid = hasExplicitComponents ? Number(installment.interest_paid) : Number(installment.charge_paid);
++    const interestRemaining = Math.max(interestDue - interestPaid, 0);
++    if (principalRemaining === 0 && penaltyRemaining === 0 && interestRemaining === 0) continue;
++    const installmentAllocation = allocatePaymentWaterfall({ amount: remaining, principalRemaining, penaltyRemaining, interestRemaining });
++    totalPrincipal += installmentAllocation.principalAmount;
++    totalPenalty += installmentAllocation.penaltyAmount;
++    totalInterest += installmentAllocation.interestAmount;
++    installmentUpdates.push({
++      id: installment.id,
++      principalAmount: installmentAllocation.principalAmount,
++      penaltyAmount: installmentAllocation.penaltyAmount,
++      interestAmount: installmentAllocation.interestAmount,
++      chargeAmount: installmentAllocation.chargeAmount,
++      nowPaid: installmentAllocation.principalAmount >= principalRemaining
++        && installmentAllocation.penaltyAmount >= penaltyRemaining
++        && installmentAllocation.interestAmount >= interestRemaining,
++    });
++    remaining = installmentAllocation.overpaymentAmount;
++  }
++  // Only genuinely excess money — left over after every open installment on this loan is
++  // fully satisfied — becomes overpaymentAmount. Anything still owed on a later installment
++  // is money that installment needed, not a surplus.
++  const allocation = {
++    principalAmount: totalPrincipal,
++    penaltyAmount: totalPenalty,
++    interestAmount: totalInterest,
++    chargeAmount: totalPenalty + totalInterest,
++    overpaymentAmount: remaining,
++  };
++  const primaryInstallmentId = installmentUpdates[0]?.id ?? schedule.rows[0].id;
+   const receiptReference = input.receiptReference ?? `RCT-${new Date().toISOString().replace(/[-:.TZ]/g, '')}-${randomUUID().slice(0, 8).toUpperCase()}`;
+   const payment = await client.query<{ id: string }>(
+     `INSERT INTO payments
+@@ -204,7 +243,7 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+       allocation.interestAmount,
+       allocation.chargeAmount,
+       allocation.overpaymentAmount,
+-      installment.id,
++      primaryInstallmentId,
+     ],
+   );
+   const paymentId = payment.rows[0].id;
+@@ -214,27 +253,21 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+       WHERE id = $2 AND outstanding_principal >= $1 RETURNING outstanding_principal, status`, [allocation.principalAmount, input.loanId],
+   );
+   if (!updated.rowCount) throw new Error('LOAN_BALANCE_GUARD_FAILED');
+-  const scheduleUpdate = await client.query<{ principal_paid: number; penalty_paid: number; interest_paid: number; charge_paid: number }>(
+-    `UPDATE repayment_schedules
+-        SET principal_paid = principal_paid + $1,
+-            penalty_paid = penalty_paid + $2,
+-            interest_paid = interest_paid + $3,
+-            charge_paid = charge_paid + $4,
+-            status = $5
+-      WHERE id = $6
+-      RETURNING principal_paid, penalty_paid, interest_paid, charge_paid`,
+-    [
+-      allocation.principalAmount,
+-      allocation.penaltyAmount,
+-      allocation.interestAmount,
+-      allocation.chargeAmount,
+-      allocation.principalAmount >= principalRemaining
+-        && allocation.penaltyAmount >= penaltyRemaining
+-        && allocation.interestAmount >= interestRemaining ? 'paid' : 'open',
+-      installment.id,
+-    ],
+-  );
+-  if (!scheduleUpdate.rowCount) throw new Error('SCHEDULE_UPDATE_FAILED');
++  // One UPDATE per installment this payment actually touched (almost always one; more than
++  // one only when the payment covered a prior installment's shortfall too).
++  for (const update of installmentUpdates) {
++    const scheduleUpdate = await client.query(
++      `UPDATE repayment_schedules
++          SET principal_paid = principal_paid + $1,
++              penalty_paid = penalty_paid + $2,
++              interest_paid = interest_paid + $3,
++              charge_paid = charge_paid + $4,
++              status = $5
++        WHERE id = $6`,
++      [update.principalAmount, update.penaltyAmount, update.interestAmount, update.chargeAmount, update.nowPaid ? 'paid' : 'open', update.id],
++    );
++    if (!scheduleUpdate.rowCount) throw new Error('SCHEDULE_UPDATE_FAILED');
++  }
+   const creditLines = [
+     { accountCode: 'loan.principal', side: 'credit' as const, amount: allocation.principalAmount },
+     { accountCode: 'realized.penalty', side: 'credit' as const, amount: allocation.penaltyAmount },
+diff --git a/tests/payment-reconciliation.integration.test.ts b/tests/payment-reconciliation.integration.test.ts
+index eaeef92..15deecd 100644
+--- a/tests/payment-reconciliation.integration.test.ts
++++ b/tests/payment-reconciliation.integration.test.ts
+@@ -126,6 +126,62 @@ suite('Stage 2 atomic payment and reconciliation', () => {
+     } finally { client.release(); }
+   });
+
++  it('a payment covering two overdue installments clears both instead of stranding the second', async () => {
++    const client = await pool!.connect();
++    const clientId = randomUUID();
++    const productId = randomUUID();
++    const applicationId = randomUUID();
++    const loanId = randomUUID();
++    try {
++      await client.query('BEGIN');
++      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Catch-up Client')`, [clientId, branchId, `client-${clientId}`]);
++      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Catch-up Product')`, [productId, `product-${productId}`]);
++      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
++      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
++      // Two overdue installments, both already due: 50,000 principal each, no penalty/interest.
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '60 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '30 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query('COMMIT');
++
++      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount: 100000, idempotencyKey: `catchup-${loanId}`, correlationId: randomUUID() });
++      expect(result).toMatchObject({ principalAmount: 100000, overpaymentAmount: 0, outstandingPrincipal: 0, loanStatus: 'completed' });
++      const schedules = await pool!.query<{ due_on: string; principal_paid: string; status: string }>(`SELECT due_on, principal_paid, status FROM repayment_schedules WHERE loan_id = $1 ORDER BY due_on`, [loanId]);
++      expect(schedules.rows.map((row) => ({ principalPaid: Number(row.principal_paid), status: row.status }))).toEqual([
++        { principalPaid: 50000, status: 'paid' },
++        { principalPaid: 50000, status: 'paid' },
++      ]);
++      const holding = await pool!.query('SELECT 1 FROM overpayment_holdings WHERE loan_id = $1', [loanId]);
++      expect(holding.rowCount).toBe(0);
++    } finally { client.release(); }
++  });
++
++  it('a payment covering one full installment plus a partial second leaves the second correctly partial', async () => {
++    const client = await pool!.connect();
++    const clientId = randomUUID();
++    const productId = randomUUID();
++    const applicationId = randomUUID();
++    const loanId = randomUUID();
++    try {
++      await client.query('BEGIN');
++      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Partial Client')`, [clientId, branchId, `client-${clientId}`]);
++      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Partial Product')`, [productId, `product-${productId}`]);
++      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
++      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '60 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '30 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query('COMMIT');
++
++      // Pays the first installment fully (50,000) plus 20,000 toward the second — nothing left as overpayment.
++      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount: 70000, idempotencyKey: `partial-${loanId}`, correlationId: randomUUID() });
++      expect(result).toMatchObject({ principalAmount: 70000, overpaymentAmount: 0, outstandingPrincipal: 30000 });
++      const schedules = await pool!.query<{ due_on: string; principal_paid: string; status: string }>(`SELECT due_on, principal_paid, status FROM repayment_schedules WHERE loan_id = $1 ORDER BY due_on`, [loanId]);
++      expect(schedules.rows.map((row) => ({ principalPaid: Number(row.principal_paid), status: row.status }))).toEqual([
++        { principalPaid: 50000, status: 'paid' },
++        { principalPaid: 20000, status: 'open' },
++      ]);
++    } finally { client.release(); }
++  });
++
+   it('rejects a variance submission that has no payments and rolls back the batch', async () => {
+     const batch = `batch-${randomUUID()}`;
+     await expect(postReconciliationBatch({ actorUserId: userId, actorRole: 'manager', branchId, batchReference: batch, expectedAmount: 100, recordedAmount: 90, submittedAmount: 80, paymentIds: [], policyVersion: 'v1', managerOverride: false, correlationId: randomUUID() })).rejects.toThrow('RECONCILIATION_NO_PAYMENTS');
+-- 
+2.43.0
+From df46cabb16ee19d163120846e81d0c4f121675c0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 22 Sep 2026 05:20:28 +0000
+Subject: [PATCH] fix(payments): apply the waterfall across every open
+ installment, not just the first
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+payment-posting.ts fetched exactly one open schedule row (ORDER BY due_on,
+id LIMIT 1) and ran the entire payment against it. A payment covering more
+than one overdue installment only cleared the first: the remainder went to
+overpayment_holdings, which nothing ever reads back. The result: a client
+who paid everything owed still showed a still-open, still-overdue second
+installment, which the overdue-detection cron kept flagging.
+
+Reproduced live: two overdue 50,000 installments, one 100,000 payment.
+Before: installment 1 paid, installment 2 untouched, 50,000 stranded in
+overpayment_holdings. After: both installments paid, nothing held.
+
+Fix: lock every open installment for the loan (still one query, still one
+FOR UPDATE, same lock order every time so no new deadlock risk — verified
+under real concurrency) and walk the waterfall across them in due-date
+order, carrying the remainder from one installment into the next. Only
+money left over after every open installment is satisfied becomes
+overpaymentAmount. payments.schedule_id (nullable, no behavior elsewhere
+depends on it being exclusive) is set to the first installment touched,
+same as before for the common single-installment case.
+
+Adds two regression tests (full multi-installment catch-up, and a partial
+catch-up that leaves the second installment correctly partial) plus a
+concurrency check with two real concurrent catch-up payments.
+---
+ server/src/services/payment-posting.ts        | 95 +++++++++++++------
+ ...payment-reconciliation.integration.test.ts | 56 +++++++++++
+ 2 files changed, 120 insertions(+), 31 deletions(-)
+
+diff --git a/server/src/services/payment-posting.ts b/server/src/services/payment-posting.ts
+index ef34898..65dd380 100644
+--- a/server/src/services/payment-posting.ts
++++ b/server/src/services/payment-posting.ts
+@@ -160,6 +160,11 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+     };
+   }
+
++  // Every open installment is locked and walked in due-date order, so a payment that covers
++  // more than one overdue installment (a client catching up after missing several cycles)
++  // clears each one in turn instead of dumping everything but the first into overpayment
++  // holdings — money nobody ever applies forward, while the untouched installments keep
++  // showing as open/overdue despite having already been paid for.
+   const schedule = await client.query<{
+     id: string;
+     principal_due: number;
+@@ -173,17 +178,51 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+   }>(
+     `SELECT id, principal_due, principal_paid, penalty_due, penalty_paid, interest_due, interest_paid, charge_due, charge_paid
+        FROM repayment_schedules
+-     WHERE loan_id = $1 AND status = 'open' ORDER BY due_on, id LIMIT 1 FOR UPDATE`, [input.loanId],
++     WHERE loan_id = $1 AND status = 'open' ORDER BY due_on, id FOR UPDATE`, [input.loanId],
+   );
+   if (!schedule.rowCount) throw new Error('NO_OPEN_REPAYMENT_SCHEDULE');
+-  const installment = schedule.rows[0];
+-  const principalRemaining = Math.max(Number(installment.principal_due) - Number(installment.principal_paid), 0);
+-  const penaltyRemaining = Math.max(Number(installment.penalty_due) - Number(installment.penalty_paid), 0);
+-  const hasExplicitComponents = Number(installment.penalty_due) > 0 || Number(installment.interest_due) > 0;
+-  const interestDue = hasExplicitComponents ? Number(installment.interest_due) : Number(installment.charge_due);
+-  const interestPaid = hasExplicitComponents ? Number(installment.interest_paid) : Number(installment.charge_paid);
+-  const interestRemaining = Math.max(interestDue - interestPaid, 0);
+-  const allocation = allocatePaymentWaterfall({ amount: input.amount, principalRemaining, penaltyRemaining, interestRemaining });
++
++  let remaining = input.amount;
++  let totalPrincipal = 0;
++  let totalPenalty = 0;
++  let totalInterest = 0;
++  const installmentUpdates: { id: string; principalAmount: number; penaltyAmount: number; interestAmount: number; chargeAmount: number; nowPaid: boolean }[] = [];
++  for (const installment of schedule.rows) {
++    if (remaining <= 0) break;
++    const principalRemaining = Math.max(Number(installment.principal_due) - Number(installment.principal_paid), 0);
++    const penaltyRemaining = Math.max(Number(installment.penalty_due) - Number(installment.penalty_paid), 0);
++    const hasExplicitComponents = Number(installment.penalty_due) > 0 || Number(installment.interest_due) > 0;
++    const interestDue = hasExplicitComponents ? Number(installment.interest_due) : Number(installment.charge_due);
++    const interestPaid = hasExplicitComponents ? Number(installment.interest_paid) : Number(installment.charge_paid);
++    const interestRemaining = Math.max(interestDue - interestPaid, 0);
++    if (principalRemaining === 0 && penaltyRemaining === 0 && interestRemaining === 0) continue;
++    const installmentAllocation = allocatePaymentWaterfall({ amount: remaining, principalRemaining, penaltyRemaining, interestRemaining });
++    totalPrincipal += installmentAllocation.principalAmount;
++    totalPenalty += installmentAllocation.penaltyAmount;
++    totalInterest += installmentAllocation.interestAmount;
++    installmentUpdates.push({
++      id: installment.id,
++      principalAmount: installmentAllocation.principalAmount,
++      penaltyAmount: installmentAllocation.penaltyAmount,
++      interestAmount: installmentAllocation.interestAmount,
++      chargeAmount: installmentAllocation.chargeAmount,
++      nowPaid: installmentAllocation.principalAmount >= principalRemaining
++        && installmentAllocation.penaltyAmount >= penaltyRemaining
++        && installmentAllocation.interestAmount >= interestRemaining,
++    });
++    remaining = installmentAllocation.overpaymentAmount;
++  }
++  // Only genuinely excess money — left over after every open installment on this loan is
++  // fully satisfied — becomes overpaymentAmount. Anything still owed on a later installment
++  // is money that installment needed, not a surplus.
++  const allocation = {
++    principalAmount: totalPrincipal,
++    penaltyAmount: totalPenalty,
++    interestAmount: totalInterest,
++    chargeAmount: totalPenalty + totalInterest,
++    overpaymentAmount: remaining,
++  };
++  const primaryInstallmentId = installmentUpdates[0]?.id ?? schedule.rows[0].id;
+   const receiptReference = input.receiptReference ?? `RCT-${new Date().toISOString().replace(/[-:.TZ]/g, '')}-${randomUUID().slice(0, 8).toUpperCase()}`;
+   const payment = await client.query<{ id: string }>(
+     `INSERT INTO payments
+@@ -204,7 +243,7 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+       allocation.interestAmount,
+       allocation.chargeAmount,
+       allocation.overpaymentAmount,
+-      installment.id,
++      primaryInstallmentId,
+     ],
+   );
+   const paymentId = payment.rows[0].id;
+@@ -214,27 +253,21 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+       WHERE id = $2 AND outstanding_principal >= $1 RETURNING outstanding_principal, status`, [allocation.principalAmount, input.loanId],
+   );
+   if (!updated.rowCount) throw new Error('LOAN_BALANCE_GUARD_FAILED');
+-  const scheduleUpdate = await client.query<{ principal_paid: number; penalty_paid: number; interest_paid: number; charge_paid: number }>(
+-    `UPDATE repayment_schedules
+-        SET principal_paid = principal_paid + $1,
+-            penalty_paid = penalty_paid + $2,
+-            interest_paid = interest_paid + $3,
+-            charge_paid = charge_paid + $4,
+-            status = $5
+-      WHERE id = $6
+-      RETURNING principal_paid, penalty_paid, interest_paid, charge_paid`,
+-    [
+-      allocation.principalAmount,
+-      allocation.penaltyAmount,
+-      allocation.interestAmount,
+-      allocation.chargeAmount,
+-      allocation.principalAmount >= principalRemaining
+-        && allocation.penaltyAmount >= penaltyRemaining
+-        && allocation.interestAmount >= interestRemaining ? 'paid' : 'open',
+-      installment.id,
+-    ],
+-  );
+-  if (!scheduleUpdate.rowCount) throw new Error('SCHEDULE_UPDATE_FAILED');
++  // One UPDATE per installment this payment actually touched (almost always one; more than
++  // one only when the payment covered a prior installment's shortfall too).
++  for (const update of installmentUpdates) {
++    const scheduleUpdate = await client.query(
++      `UPDATE repayment_schedules
++          SET principal_paid = principal_paid + $1,
++              penalty_paid = penalty_paid + $2,
++              interest_paid = interest_paid + $3,
++              charge_paid = charge_paid + $4,
++              status = $5
++        WHERE id = $6`,
++      [update.principalAmount, update.penaltyAmount, update.interestAmount, update.chargeAmount, update.nowPaid ? 'paid' : 'open', update.id],
++    );
++    if (!scheduleUpdate.rowCount) throw new Error('SCHEDULE_UPDATE_FAILED');
++  }
+   const creditLines = [
+     { accountCode: 'loan.principal', side: 'credit' as const, amount: allocation.principalAmount },
+     { accountCode: 'realized.penalty', side: 'credit' as const, amount: allocation.penaltyAmount },
+diff --git a/tests/payment-reconciliation.integration.test.ts b/tests/payment-reconciliation.integration.test.ts
+index eaeef92..15deecd 100644
+--- a/tests/payment-reconciliation.integration.test.ts
++++ b/tests/payment-reconciliation.integration.test.ts
+@@ -126,6 +126,62 @@ suite('Stage 2 atomic payment and reconciliation', () => {
+     } finally { client.release(); }
+   });
+
++  it('a payment covering two overdue installments clears both instead of stranding the second', async () => {
++    const client = await pool!.connect();
++    const clientId = randomUUID();
++    const productId = randomUUID();
++    const applicationId = randomUUID();
++    const loanId = randomUUID();
++    try {
++      await client.query('BEGIN');
++      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Catch-up Client')`, [clientId, branchId, `client-${clientId}`]);
++      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Catch-up Product')`, [productId, `product-${productId}`]);
++      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
++      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
++      // Two overdue installments, both already due: 50,000 principal each, no penalty/interest.
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '60 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '30 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query('COMMIT');
++
++      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount: 100000, idempotencyKey: `catchup-${loanId}`, correlationId: randomUUID() });
++      expect(result).toMatchObject({ principalAmount: 100000, overpaymentAmount: 0, outstandingPrincipal: 0, loanStatus: 'completed' });
++      const schedules = await pool!.query<{ due_on: string; principal_paid: string; status: string }>(`SELECT due_on, principal_paid, status FROM repayment_schedules WHERE loan_id = $1 ORDER BY due_on`, [loanId]);
++      expect(schedules.rows.map((row) => ({ principalPaid: Number(row.principal_paid), status: row.status }))).toEqual([
++        { principalPaid: 50000, status: 'paid' },
++        { principalPaid: 50000, status: 'paid' },
++      ]);
++      const holding = await pool!.query('SELECT 1 FROM overpayment_holdings WHERE loan_id = $1', [loanId]);
++      expect(holding.rowCount).toBe(0);
++    } finally { client.release(); }
++  });
++
++  it('a payment covering one full installment plus a partial second leaves the second correctly partial', async () => {
++    const client = await pool!.connect();
++    const clientId = randomUUID();
++    const productId = randomUUID();
++    const applicationId = randomUUID();
++    const loanId = randomUUID();
++    try {
++      await client.query('BEGIN');
++      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Partial Client')`, [clientId, branchId, `client-${clientId}`]);
++      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Partial Product')`, [productId, `product-${productId}`]);
++      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
++      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '60 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE - INTERVAL '30 days', 50000, 0)`, [randomUUID(), loanId]);
++      await client.query('COMMIT');
++
++      // Pays the first installment fully (50,000) plus 20,000 toward the second — nothing left as overpayment.
++      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount: 70000, idempotencyKey: `partial-${loanId}`, correlationId: randomUUID() });
++      expect(result).toMatchObject({ principalAmount: 70000, overpaymentAmount: 0, outstandingPrincipal: 30000 });
++      const schedules = await pool!.query<{ due_on: string; principal_paid: string; status: string }>(`SELECT due_on, principal_paid, status FROM repayment_schedules WHERE loan_id = $1 ORDER BY due_on`, [loanId]);
++      expect(schedules.rows.map((row) => ({ principalPaid: Number(row.principal_paid), status: row.status }))).toEqual([
++        { principalPaid: 50000, status: 'paid' },
++        { principalPaid: 20000, status: 'open' },
++      ]);
++    } finally { client.release(); }
++  });
++
+   it('rejects a variance submission that has no payments and rolls back the batch', async () => {
+     const batch = `batch-${randomUUID()}`;
+     await expect(postReconciliationBatch({ actorUserId: userId, actorRole: 'manager', branchId, batchReference: batch, expectedAmount: 100, recordedAmount: 90, submittedAmount: 80, paymentIds: [], policyVersion: 'v1', managerOverride: false, correlationId: randomUUID() })).rejects.toThrow('RECONCILIATION_NO_PAYMENTS');
+-- 
+2.43.0

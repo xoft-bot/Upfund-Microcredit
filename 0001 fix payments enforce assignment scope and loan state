@@ -1,0 +1,276 @@
+From 2cf280c7610aee5f92f3d2e6507c336e2c620726 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 22 Sep 2026 12:01:47 +0000
+Subject: [PATCH] fix(payments): enforce assignment scope and loan-state, map
+ errors to HTTP status
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Four coordinated fixes to postManualPayment and its route, ordered so the
+existing idempotency check runs first — a retry of an already-posted
+payment must succeed even when the loan or assignment state that same
+payment changed would now fail the new checks:
+
+1. Object-level assignment scope. A collector/officer could alter loanId
+   in the request body and post a payment against any loan in their
+   branch — collector_assignments was never consulted. Now enforced for
+   actorRole 'collector'/'officer' only (admin/manager bypass, matching
+   the existing pattern in the collector-reporting route); skipped
+   entirely when actorRole is omitted (internal/seed callers, which don't
+   seed assignment rows).
+
+2. Loan lifecycle status. loan.status was fetched but never checked
+   against anything. Now gated on PAYABLE_LOAN_STATUSES = {active,
+   overdue, disbursed, defaulted}, derived directly from loanTransitions
+   in state-machines.ts: 'approved' (undisbursed, no debt yet) and the
+   terminal 'written_off'/'completed' are excluded; 'defaulted' stays
+   payable because loanTransitions itself allows defaulted -> active,
+   which is exactly what a recovery payment does.
+
+3. Idempotency-before-state ordering. Both new checks are inserted after
+   the existing idempotency lookup, not before, specifically so a retried
+   payment that already completed the loan (or outlived a since-lapsed
+   assignment window) still returns the original result instead of
+   throwing LOAN_NOT_PAYABLE / COLLECTOR_NOT_ASSIGNED.
+
+4. Error -> HTTP status mapping. Every business-rule error the service
+   throws fell through the route's bare `throw error` to the global
+   error handler, which has no way to tell a permanent business failure
+   from a genuine server fault and returns a generic 500. The offline
+   sync queue's retry classification (network/401/5xx => retry, else
+   stop and flag) then retried these forever. Route now maps each known
+   error code to its real status (400/403/404/409) via a lookup table;
+   only genuinely unknown errors still fall through to the 500 handler.
+
+Adds 8 regression tests: two LOAN_NOT_PAYABLE cases, one defaulted-loan
+pass-through, one idempotent-retry-past-completion, one unassigned-collector
+rejection, one assigned-collector/admin-bypass pass-through, one
+idempotent-retry-past-assignment-lapse (this one initially written wrong —
+it accidentally passed while testing a different, mislabeled scenario;
+corrected to actually seed a real first payment then lapse the assignment
+before retrying, which caught a genuine CHECK-constraint seeding bug in the
+test itself, not the fix), and one HTTP-level app.inject test proving a
+business error now returns 409 with a real error code instead of 500.
+---
+ server/src/routes/payments.ts                 | 29 +++++-
+ server/src/services/payment-posting.ts        | 29 ++++++
+ ...payment-reconciliation.integration.test.ts | 96 +++++++++++++++++++
+ 3 files changed, 151 insertions(+), 3 deletions(-)
+
+diff --git a/server/src/routes/payments.ts b/server/src/routes/payments.ts
+index 92e5797..0ec530e 100644
+--- a/server/src/routes/payments.ts
++++ b/server/src/routes/payments.ts
+@@ -42,13 +42,36 @@ export function registerPaymentRoutes(app: FastifyInstance, verifier?: TokenVeri
+   }, async (request, reply) => {
+     const actor = request.actor!;
+     try {
+-      const result = await postManualPayment({ ...request.body, actorUserId: actor.userId, correlationId: String(request.headers['x-correlation-id']) });
++      const result = await postManualPayment({ ...request.body, actorUserId: actor.userId, actorRole: actor.role, correlationId: String(request.headers['x-correlation-id']) });
+       return { ok: true, data: result, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+     } catch (error) {
+-      if (error instanceof Error && error.message === 'FIELD_COLLECTION_CONFLICT') {
+-        return reply.code(409).send({ ok: false, error: { code: 'CONFLICT', message: 'This offline collection conflicts with an existing server record' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
++      if (error instanceof Error) {
++        const mapped = PAYMENT_ERROR_STATUS[error.message];
++        if (mapped) {
++          return reply.code(mapped.status).send({ ok: false, error: { code: mapped.code, message: mapped.message }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
++        }
+       }
+       throw error;
+     }
+   });
+ }
++
++// Every business-rule error postManualPayment can throw, mapped to the HTTP status the caller
++// actually needs. Without this, every one of these fell through to the global error handler,
++// which has no way to distinguish them from a genuine server fault and returns a generic 500 —
++// which the offline sync queue's retry classification (network/401/5xx => retry, everything else
++// => stop and flag) treats as transient, so a permanently invalid payment (wrong branch, loan not
++// payable, unassigned collector, bad input) got retried forever instead of surfacing to the user.
++const PAYMENT_ERROR_STATUS: Record<string, { status: number; code: string; message: string }> = {
++  INVALID_PAYMENT_AMOUNT: { status: 400, code: 'INVALID_PAYMENT_AMOUNT', message: 'Payment amount must be a positive whole number' },
++  INVALID_PAYMENT_METHOD: { status: 400, code: 'INVALID_PAYMENT_METHOD', message: 'Unsupported payment method' },
++  INVALID_CAPTURED_AT: { status: 400, code: 'INVALID_CAPTURED_AT', message: 'capturedAt must be a valid date-time' },
++  FIELD_COLLECTION_CONFLICT: { status: 409, code: 'CONFLICT', message: 'This offline collection conflicts with an existing server record' },
++  LOAN_NOT_FOUND_OR_BRANCH_DENIED: { status: 404, code: 'LOAN_NOT_FOUND', message: 'Loan not found for this branch' },
++  LOAN_CLIENT_MISMATCH: { status: 409, code: 'LOAN_CLIENT_MISMATCH', message: 'This loan does not belong to the specified client' },
++  LOAN_NOT_PAYABLE: { status: 409, code: 'LOAN_NOT_PAYABLE', message: 'This loan is not in a state that accepts payments' },
++  COLLECTOR_NOT_ASSIGNED: { status: 403, code: 'COLLECTOR_NOT_ASSIGNED', message: 'You are not currently assigned to this client' },
++  NO_OPEN_REPAYMENT_SCHEDULE: { status: 409, code: 'NO_OPEN_REPAYMENT_SCHEDULE', message: 'This loan has no open installment to apply a payment to' },
++  LOAN_BALANCE_GUARD_FAILED: { status: 409, code: 'LOAN_BALANCE_GUARD_FAILED', message: 'Loan balance changed unexpectedly while posting this payment' },
++  SCHEDULE_UPDATE_FAILED: { status: 409, code: 'SCHEDULE_UPDATE_FAILED', message: 'Repayment schedule changed unexpectedly while posting this payment' },
++};
+diff --git a/server/src/services/payment-posting.ts b/server/src/services/payment-posting.ts
+index 65dd380..dcd7d0d 100644
+--- a/server/src/services/payment-posting.ts
++++ b/server/src/services/payment-posting.ts
+@@ -8,6 +8,9 @@ type PaymentMethod = 'cash' | 'mobile_money';
+
+ export interface ManualPaymentInput {
+   actorUserId: string;
++  /** Present for HTTP-originated payments; omitted by internal/seed callers, which skip the
++   *  assignment-scope check below (they don't seed collector_assignments rows). */
++  actorRole?: string;
+   loanId: string;
+   branchId: string;
+   amount: number;
+@@ -43,6 +46,15 @@ function validPaymentMethod(method: PaymentMethod | undefined): void {
+   if (method !== undefined && method !== 'cash' && method !== 'mobile_money') throw new Error('INVALID_PAYMENT_METHOD');
+ }
+
++// Mirrors loanTransitions in state-machines.ts: every non-terminal status a loan can be in
++// while it still owes money. 'approved' (not yet disbursed — no debt exists) and the two
++// terminal states 'written_off' and 'completed' are deliberately excluded; a written-off loan
++// must go through transitionLoan's formal write-back, not silently reopen via a stray payment.
++// 'defaulted' stays payable because loanTransitions itself allows defaulted -> active, which is
++// exactly what a recovery payment does.
++const PAYABLE_LOAN_STATUSES = new Set(['active', 'overdue', 'disbursed', 'defaulted']);
++const COLLECTOR_SCOPED_ROLES = new Set(['collector', 'officer']);
++
+ function normalizedCapturedAt(capturedAt: string | undefined): string {
+   if (!capturedAt) return new Date().toISOString();
+   const parsed = new Date(capturedAt);
+@@ -165,6 +177,23 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
+   // clears each one in turn instead of dumping everything but the first into overpayment
+   // holdings — money nobody ever applies forward, while the untouched installments keep
+   // showing as open/overdue despite having already been paid for.
++  // Loan-state and collector-assignment checks run AFTER the idempotency check above and
++  // BEFORE anything else, specifically so a legitimate retry of an already-posted payment never
++  // fails on account of state that payment itself caused (the loan reaching 'completed', or an
++  // assignment window that has since lapsed) — see idempotency check above.
++  if (!PAYABLE_LOAN_STATUSES.has(loan.rows[0].status)) throw new Error('LOAN_NOT_PAYABLE');
++  if (input.actorRole && COLLECTOR_SCOPED_ROLES.has(input.actorRole)) {
++    const assignment = await client.query(
++      `SELECT 1 FROM collector_assignments
++        WHERE officer_id = $1 AND client_id = $2 AND branch_id = $3
++          AND effective_from <= CURRENT_DATE
++          AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
++        LIMIT 1`,
++      [input.actorUserId, loan.rows[0].client_id, input.branchId],
++    );
++    if (!assignment.rowCount) throw new Error('COLLECTOR_NOT_ASSIGNED');
++  }
++
+   const schedule = await client.query<{
+     id: string;
+     principal_due: number;
+diff --git a/tests/payment-reconciliation.integration.test.ts b/tests/payment-reconciliation.integration.test.ts
+index 251f108..d24bd84 100644
+--- a/tests/payment-reconciliation.integration.test.ts
++++ b/tests/payment-reconciliation.integration.test.ts
+@@ -1,8 +1,11 @@
+ import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+ import pg from 'pg';
++import Fastify from 'fastify';
+ import { randomUUID } from 'node:crypto';
+ import { postManualPayment } from '../server/src/services/payment-posting.js';
+ import { postReconciliationBatch } from '../server/src/services/reconciliation-posting.js';
++import type { TokenVerifier, UserResolver } from '../server/src/middleware/auth.js';
++import { registerPaymentRoutes } from '../server/src/routes/payments.js';
+
+ const databaseUrl = process.env.DATABASE_URL;
+ const suite = databaseUrl ? describe : describe.skip;
+@@ -608,6 +611,99 @@ suite('Stage 2 atomic payment and reconciliation', () => {
+     });
+   });
+
++  describe('loan-state, assignment, and error-mapping guards on payment posting', () => {
++    async function seedLoanWithStatus(status: string): Promise<{ loanId: string; clientId: string }> {
++      const clientId = randomUUID();
++      const productId = randomUUID();
++      const applicationId = randomUUID();
++      const loanId = randomUUID();
++      await pool!.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Guard Client')`, [clientId, branchId, `client-${clientId}`]);
++      await pool!.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Guard Product')`, [productId, `product-${productId}`]);
++      await pool!.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 50000, $5)`, [applicationId, clientId, productId, branchId, userId]);
++      await pool!.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 50000, 50000, $5::loan_status)`, [loanId, applicationId, clientId, branchId, status]);
++      await pool!.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE, 50000, 0)`, [randomUUID(), loanId]);
++      return { loanId, clientId };
++    }
++
++    it('rejects a payment against a loan that is not yet disbursed', async () => {
++      const { loanId } = await seedLoanWithStatus('approved');
++      await expect(postManualPayment({ actorUserId: userId, loanId, branchId, amount: 10000, idempotencyKey: `np-${loanId}`, correlationId: randomUUID() })).rejects.toThrow('LOAN_NOT_PAYABLE');
++    });
++
++    it('rejects a payment against a written-off loan', async () => {
++      const { loanId } = await seedLoanWithStatus('written_off');
++      await expect(postManualPayment({ actorUserId: userId, loanId, branchId, amount: 10000, idempotencyKey: `wo-${loanId}`, correlationId: randomUUID() })).rejects.toThrow('LOAN_NOT_PAYABLE');
++    });
++
++    it('allows a recovery payment against a defaulted loan', async () => {
++      const { loanId } = await seedLoanWithStatus('defaulted');
++      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, amount: 10000, idempotencyKey: `def-${loanId}`, correlationId: randomUUID() });
++      expect(result.principalAmount).toBe(10000);
++    });
++
++    it('an idempotent retry succeeds even though the payment itself already completed the loan', async () => {
++      const { loanId } = await seedLoanWithStatus('active');
++      const key = `complete-${loanId}`;
++      const first = await postManualPayment({ actorUserId: userId, loanId, branchId, amount: 50000, idempotencyKey: key, correlationId: randomUUID() });
++      expect(first).toMatchObject({ loanStatus: 'completed', created: true });
++      // Same idempotency key, loan is now 'completed' — must still return the original result,
++      // not fail LOAN_NOT_PAYABLE because of a state change the payment itself caused.
++      const retry = await postManualPayment({ actorUserId: userId, loanId, branchId, amount: 50000, idempotencyKey: key, correlationId: randomUUID() });
++      expect(retry).toMatchObject({ paymentId: first.paymentId, created: false, loanStatus: 'completed' });
++    });
++
++    it('rejects a collector with no active assignment to the client', async () => {
++      const { loanId } = await seedLoanWithStatus('active');
++      await expect(postManualPayment({ actorUserId: randomUUID(), actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: `unassigned-${loanId}`, correlationId: randomUUID() })).rejects.toThrow('COLLECTOR_NOT_ASSIGNED');
++    });
++
++    it('allows a collector with an active assignment, and an admin/manager bypasses the check entirely', async () => {
++      const { loanId, clientId } = await seedLoanWithStatus('active');
++      const collectorId = randomUUID();
++      const roleId = (await pool!.query<{ id: string }>(`INSERT INTO roles (code, name) VALUES ($1, 'Collector') RETURNING id`, [`collector-${randomUUID()}`])).rows[0].id;
++      await pool!.query(`INSERT INTO users (id, firebase_uid, display_name, role_id, branch_id) VALUES ($1, $2, 'Assigned Collector', $3, $4)`, [collectorId, `collector-${collectorId}`, roleId, branchId]);
++      await pool!.query(`INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code) VALUES ($1, $2, $3, 'ROUTE-1')`, [collectorId, clientId, branchId]);
++      const result = await postManualPayment({ actorUserId: collectorId, actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: `assigned-${loanId}`, correlationId: randomUUID() });
++      expect(result.principalAmount).toBe(10000);
++    });
++
++    it('an idempotent retry succeeds for a collector even after their assignment window has since lapsed', async () => {
++      const { loanId, clientId } = await seedLoanWithStatus('active');
++      const collectorId = randomUUID();
++      const roleId = (await pool!.query<{ id: string }>(`INSERT INTO roles (code, name) VALUES ($1, 'Collector') RETURNING id`, [`collector-${randomUUID()}`])).rows[0].id;
++      await pool!.query(`INSERT INTO users (id, firebase_uid, display_name, role_id, branch_id) VALUES ($1, $2, 'Lapsing Collector', $3, $4)`, [collectorId, `collector-${collectorId}`, roleId, branchId]);
++      const assignment = await pool!.query<{ id: string }>(`INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code, effective_from) VALUES ($1, $2, $3, 'ROUTE-2', CURRENT_DATE - INTERVAL '30 days') RETURNING id`, [collectorId, clientId, branchId]);
++      const key = `lapsed-${loanId}`;
++      // First call: assignment is valid, payment succeeds normally.
++      const first = await postManualPayment({ actorUserId: collectorId, actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: key, correlationId: randomUUID() });
++      expect(first.created).toBe(true);
++      // Assignment lapses (route reassigned, collector reassigned elsewhere, etc.) sometime after.
++      await pool!.query(`UPDATE collector_assignments SET effective_to = CURRENT_DATE - INTERVAL '1 day' WHERE id = $1`, [assignment.rows[0].id]);
++      // Same idempotency key, same collector — must still return the original result, not fail
++      // COLLECTOR_NOT_ASSIGNED because of a lapse that happened after the original payment posted.
++      const retry = await postManualPayment({ actorUserId: collectorId, actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: key, correlationId: randomUUID() });
++      expect(retry).toMatchObject({ paymentId: first.paymentId, created: false });
++    });
++
++    it('maps a known business-rule error to its HTTP status instead of a generic 500', async () => {
++      const { loanId } = await seedLoanWithStatus('approved');
++      const app = Fastify();
++      const verifier: TokenVerifier = async () => ({ uid: `http-guard-${userId}` }) as never;
++      const resolveUser: UserResolver = async () => ({ dbUserId: userId, db_user_id: userId, firebaseUid: `http-guard-${userId}`, firebase_uid: `http-guard-${userId}`, role: 'manager', branchId, branch_id: branchId, clientId: null, client_id: null, permissions: [] });
++      registerPaymentRoutes(app, verifier, resolveUser);
++      await app.ready();
++      const response = await app.inject({
++        method: 'POST',
++        url: '/api/v1/payments',
++        headers: { authorization: 'Bearer valid' },
++        payload: { loanId, branchId, amount: 10000, idempotencyKey: `http-${loanId}` },
++      });
++      expect(response.statusCode).toBe(409);
++      expect(response.json()).toMatchObject({ ok: false, error: { code: 'LOAN_NOT_PAYABLE' } });
++      await app.close();
++    });
++  });
++
+   describe('payment set is locked once a batch exists', () => {
+     it('rejects a decision that swaps in a different, equal-sum payment set', async () => {
+       const branchId = randomUUID();
+-- 
+2.43.0
