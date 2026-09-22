@@ -144,6 +144,27 @@ async function postReconciliationBatchOnClient(client: DbClient, input: Reconcil
   // with no signal to the caller.
   // A repeated id must neither trip the count check below nor be able to inflate a total.
   const paymentIds = [...new Set(input.paymentIds)];
+
+  // A decision call (or any retry) on a batch that already exists must review the exact
+  // payment set that was originally submitted. Without this, sameFacts only compares the
+  // three amount totals — a caller can approve/reject with a *different* set of payments
+  // that happens to add up to the same recordedAmount, and the INSERT below (ON CONFLICT
+  // DO NOTHING) only skips exact duplicates, so the new set gets attached ALONGSIDE the
+  // original instead of replacing it. The realized-charge computation then sums every
+  // payment ever attached to this reconciliation, silently including payments nobody
+  // actually reviewed in this decision.
+  if (isRetryOfNonTerminalBatch) {
+    const attached = await client.query<{ payment_id: string }>(
+      `SELECT payment_id FROM reconciliation_payments WHERE reconciliation_id = $1`,
+      [reconciliationId],
+    );
+    const attachedIds = attached.rows.map((row) => row.payment_id);
+    const sameSet = attachedIds.length === paymentIds.length
+      && new Set(attachedIds).size === new Set(paymentIds).size
+      && attachedIds.every((id) => paymentIds.includes(id));
+    if (!sameSet) throw new Error('RECONCILIATION_PAYMENT_SET_MISMATCH');
+  }
+
   if (paymentIds.length) {
     const paymentCheck = await client.query<{ id: string; amount: string }>(
       `SELECT id, amount FROM payments WHERE id = ANY($1::uuid[]) AND branch_id = $2`,

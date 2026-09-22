@@ -607,6 +607,37 @@ suite('Stage 2 atomic payment and reconciliation', () => {
       expect(replay).toMatchObject({ status: 'approved', created: false });
     });
   });
+
+  describe('payment set is locked once a batch exists', () => {
+    it('rejects a decision that swaps in a different, equal-sum payment set', async () => {
+      const branchId = randomUUID();
+      const fixtureA = await seedPaidBranch(50_000);
+      const fixtureB = await seedPaidBranchInBranch(branchId, 20_000, fixtureA.policyVersion);
+      const fixtureC = await seedPaidBranchInBranch(branchId, 30_000, fixtureA.policyVersion);
+      const reviewerId = await seedManager(fixtureA.branchId);
+      const batchReference = `swap-${randomUUID()}`;
+      const shared = { actorRole: 'manager' as const, branchId: fixtureA.branchId, batchReference, expectedAmount: 60_000, recordedAmount: 50_000, submittedAmount: 50_000, policyVersion: fixtureA.policyVersion };
+      const submitted = await postReconciliationBatch({ ...shared, actorUserId: userId, paymentIds: [fixtureA.paymentId], managerOverride: false, correlationId: randomUUID() });
+      expect(submitted).toMatchObject({ status: 'variance', created: true });
+      await expect(postReconciliationBatch({ ...shared, actorUserId: reviewerId, paymentIds: [fixtureB.paymentId, fixtureC.paymentId], managerOverride: true, decision: 'approve', decisionReason: 'swap attempt', correlationId: randomUUID() })).rejects.toThrow('RECONCILIATION_PAYMENT_SET_MISMATCH');
+      const attached = await pool!.query('SELECT payment_id FROM reconciliation_payments WHERE reconciliation_id = $1', [submitted.reconciliationId]);
+      expect(attached.rows.map((row: { payment_id: string }) => row.payment_id)).toEqual([fixtureA.paymentId]);
+      const row = await pool!.query<{ status: string }>('SELECT status FROM reconciliations WHERE batch_reference = $1', [batchReference]);
+      expect(row.rows[0].status).toBe('variance');
+    });
+
+    it('still allows a decision that resubmits the exact same payment set, in a different order', async () => {
+      const branchId = randomUUID();
+      const fixtureA = await seedPaidBranchInBranch(branchId, 20_000, undefined);
+      const fixtureB = await seedPaidBranchInBranch(branchId, 30_000, fixtureA.policyVersion);
+      const reviewerId = await seedManager(branchId);
+      const batchReference = `same-set-${randomUUID()}`;
+      const shared = { actorRole: 'manager' as const, branchId, batchReference, expectedAmount: 60_000, recordedAmount: 50_000, submittedAmount: 50_000, policyVersion: fixtureA.policyVersion };
+      await postReconciliationBatch({ ...shared, actorUserId: userId, paymentIds: [fixtureA.paymentId, fixtureB.paymentId], managerOverride: false, correlationId: randomUUID() });
+      const approved = await postReconciliationBatch({ ...shared, actorUserId: reviewerId, paymentIds: [fixtureB.paymentId, fixtureA.paymentId], managerOverride: true, decision: 'approve', decisionReason: 'same set, different order', correlationId: randomUUID() });
+      expect(approved).toMatchObject({ status: 'approved', created: true });
+    });
+  });
 });
 
 // --- shared fixtures -------------------------------------------------------
@@ -640,6 +671,42 @@ async function seedPaidBranch(amount: number): Promise<{ branchId: string; payme
   }
   const payment = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount, idempotencyKey: `payment-${loanId}`, correlationId: randomUUID() });
   return { branchId, paymentId: payment.paymentId, policyVersion, loanId };
+}
+
+async function seedPaidBranchInBranch(branchId: string, amount: number, policyVersion: string | undefined): Promise<{ branchId: string; paymentId: string; policyVersion: string; loanId: string }> {
+  const clientId = randomUUID();
+  const productId = randomUUID();
+  const applicationId = randomUUID();
+  const loanId = randomUUID();
+  const resolvedPolicyVersion = policyVersion ?? `policy-${randomUUID()}`;
+  const client = await pool!.connect();
+  try {
+    await client.query('BEGIN');
+    const branchExists = await client.query('SELECT 1 FROM branches WHERE id = $1', [branchId]);
+    if (!branchExists.rowCount) await client.query(`INSERT INTO branches (id, code, name) VALUES ($1, $2, 'Fixture Branch')`, [branchId, `FIX-${randomUUID().slice(0, 8)}`]);
+    await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Fixture Client')`, [clientId, branchId, `client-${clientId}`]);
+    await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Fixture Product')`, [productId, `product-${productId}`]);
+    await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
+    await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
+    await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE, 100000, 0)`, [randomUUID(), loanId]);
+    const poolsExist = await client.query('SELECT 1 FROM capital_pools WHERE branch_id = $1', [branchId]);
+    if (!poolsExist.rowCount) {
+      for (const poolType of ['credit_loss_reserve', 'operating_reserve', 'collection', 'growth']) {
+        await client.query(`INSERT INTO capital_pools (branch_id, pool_type, balance) VALUES ($1, $2::pool_type, 0)`, [branchId, poolType]);
+      }
+    }
+    if (!policyVersion) {
+      await client.query(`INSERT INTO allocation_policies (version, credit_loss_bps, operating_bps, collection_bps, growth_bps, effective_from) VALUES ($1, 2500, 2500, 2500, 2500, now())`, [resolvedPolicyVersion]);
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  const payment = await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount, idempotencyKey: `payment-${loanId}`, correlationId: randomUUID() });
+  return { branchId, paymentId: payment.paymentId, policyVersion: resolvedPolicyVersion, loanId };
 }
 
 async function seedManager(branchId: string): Promise<string> {
