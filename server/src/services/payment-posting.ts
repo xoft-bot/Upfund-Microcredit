@@ -8,6 +8,9 @@ type PaymentMethod = 'cash' | 'mobile_money';
 
 export interface ManualPaymentInput {
   actorUserId: string;
+  /** Present for HTTP-originated payments; omitted by internal/seed callers, which skip the
+   *  assignment-scope check below (they don't seed collector_assignments rows). */
+  actorRole?: string;
   loanId: string;
   branchId: string;
   amount: number;
@@ -42,6 +45,15 @@ function validAmount(amount: number): void {
 function validPaymentMethod(method: PaymentMethod | undefined): void {
   if (method !== undefined && method !== 'cash' && method !== 'mobile_money') throw new Error('INVALID_PAYMENT_METHOD');
 }
+
+// Mirrors loanTransitions in state-machines.ts: every non-terminal status a loan can be in
+// while it still owes money. 'approved' (not yet disbursed — no debt exists) and the two
+// terminal states 'written_off' and 'completed' are deliberately excluded; a written-off loan
+// must go through transitionLoan's formal write-back, not silently reopen via a stray payment.
+// 'defaulted' stays payable because loanTransitions itself allows defaulted -> active, which is
+// exactly what a recovery payment does.
+const PAYABLE_LOAN_STATUSES = new Set(['active', 'overdue', 'disbursed', 'defaulted']);
+const COLLECTOR_SCOPED_ROLES = new Set(['collector', 'officer']);
 
 function normalizedCapturedAt(capturedAt: string | undefined): string {
   if (!capturedAt) return new Date().toISOString();
@@ -165,6 +177,23 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
   // clears each one in turn instead of dumping everything but the first into overpayment
   // holdings — money nobody ever applies forward, while the untouched installments keep
   // showing as open/overdue despite having already been paid for.
+  // Loan-state and collector-assignment checks run AFTER the idempotency check above and
+  // BEFORE anything else, specifically so a legitimate retry of an already-posted payment never
+  // fails on account of state that payment itself caused (the loan reaching 'completed', or an
+  // assignment window that has since lapsed) — see idempotency check above.
+  if (!PAYABLE_LOAN_STATUSES.has(loan.rows[0].status)) throw new Error('LOAN_NOT_PAYABLE');
+  if (input.actorRole && COLLECTOR_SCOPED_ROLES.has(input.actorRole)) {
+    const assignment = await client.query(
+      `SELECT 1 FROM collector_assignments
+        WHERE officer_id = $1 AND client_id = $2 AND branch_id = $3
+          AND effective_from <= CURRENT_DATE
+          AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+        LIMIT 1`,
+      [input.actorUserId, loan.rows[0].client_id, input.branchId],
+    );
+    if (!assignment.rowCount) throw new Error('COLLECTOR_NOT_ASSIGNED');
+  }
+
   const schedule = await client.query<{
     id: string;
     principal_due: number;

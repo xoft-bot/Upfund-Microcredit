@@ -1,8 +1,11 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
+import Fastify from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { postManualPayment } from '../server/src/services/payment-posting.js';
 import { postReconciliationBatch } from '../server/src/services/reconciliation-posting.js';
+import type { TokenVerifier, UserResolver } from '../server/src/middleware/auth.js';
+import { registerPaymentRoutes } from '../server/src/routes/payments.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -605,6 +608,99 @@ suite('Stage 2 atomic payment and reconciliation', () => {
       expect(row.rows[0]).toEqual({ status: 'approved', submitted_by: userId, reviewed_by: reviewerId });
       const replay = await postReconciliationBatch({ ...facts, actorUserId: reviewerId, managerOverride: true, decision: 'approve', decisionReason: 'Short count explained by collector.', correlationId: randomUUID() });
       expect(replay).toMatchObject({ status: 'approved', created: false });
+    });
+  });
+
+  describe('loan-state, assignment, and error-mapping guards on payment posting', () => {
+    async function seedLoanWithStatus(status: string): Promise<{ loanId: string; clientId: string }> {
+      const clientId = randomUUID();
+      const productId = randomUUID();
+      const applicationId = randomUUID();
+      const loanId = randomUUID();
+      await pool!.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Guard Client')`, [clientId, branchId, `client-${clientId}`]);
+      await pool!.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Guard Product')`, [productId, `product-${productId}`]);
+      await pool!.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 50000, $5)`, [applicationId, clientId, productId, branchId, userId]);
+      await pool!.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 50000, 50000, $5::loan_status)`, [loanId, applicationId, clientId, branchId, status]);
+      await pool!.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, CURRENT_DATE, 50000, 0)`, [randomUUID(), loanId]);
+      return { loanId, clientId };
+    }
+
+    it('rejects a payment against a loan that is not yet disbursed', async () => {
+      const { loanId } = await seedLoanWithStatus('approved');
+      await expect(postManualPayment({ actorUserId: userId, loanId, branchId, amount: 10000, idempotencyKey: `np-${loanId}`, correlationId: randomUUID() })).rejects.toThrow('LOAN_NOT_PAYABLE');
+    });
+
+    it('rejects a payment against a written-off loan', async () => {
+      const { loanId } = await seedLoanWithStatus('written_off');
+      await expect(postManualPayment({ actorUserId: userId, loanId, branchId, amount: 10000, idempotencyKey: `wo-${loanId}`, correlationId: randomUUID() })).rejects.toThrow('LOAN_NOT_PAYABLE');
+    });
+
+    it('allows a recovery payment against a defaulted loan', async () => {
+      const { loanId } = await seedLoanWithStatus('defaulted');
+      const result = await postManualPayment({ actorUserId: userId, loanId, branchId, amount: 10000, idempotencyKey: `def-${loanId}`, correlationId: randomUUID() });
+      expect(result.principalAmount).toBe(10000);
+    });
+
+    it('an idempotent retry succeeds even though the payment itself already completed the loan', async () => {
+      const { loanId } = await seedLoanWithStatus('active');
+      const key = `complete-${loanId}`;
+      const first = await postManualPayment({ actorUserId: userId, loanId, branchId, amount: 50000, idempotencyKey: key, correlationId: randomUUID() });
+      expect(first).toMatchObject({ loanStatus: 'completed', created: true });
+      // Same idempotency key, loan is now 'completed' — must still return the original result,
+      // not fail LOAN_NOT_PAYABLE because of a state change the payment itself caused.
+      const retry = await postManualPayment({ actorUserId: userId, loanId, branchId, amount: 50000, idempotencyKey: key, correlationId: randomUUID() });
+      expect(retry).toMatchObject({ paymentId: first.paymentId, created: false, loanStatus: 'completed' });
+    });
+
+    it('rejects a collector with no active assignment to the client', async () => {
+      const { loanId } = await seedLoanWithStatus('active');
+      await expect(postManualPayment({ actorUserId: randomUUID(), actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: `unassigned-${loanId}`, correlationId: randomUUID() })).rejects.toThrow('COLLECTOR_NOT_ASSIGNED');
+    });
+
+    it('allows a collector with an active assignment, and an admin/manager bypasses the check entirely', async () => {
+      const { loanId, clientId } = await seedLoanWithStatus('active');
+      const collectorId = randomUUID();
+      const roleId = (await pool!.query<{ id: string }>(`INSERT INTO roles (code, name) VALUES ($1, 'Collector') RETURNING id`, [`collector-${randomUUID()}`])).rows[0].id;
+      await pool!.query(`INSERT INTO users (id, firebase_uid, display_name, role_id, branch_id) VALUES ($1, $2, 'Assigned Collector', $3, $4)`, [collectorId, `collector-${collectorId}`, roleId, branchId]);
+      await pool!.query(`INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code) VALUES ($1, $2, $3, 'ROUTE-1')`, [collectorId, clientId, branchId]);
+      const result = await postManualPayment({ actorUserId: collectorId, actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: `assigned-${loanId}`, correlationId: randomUUID() });
+      expect(result.principalAmount).toBe(10000);
+    });
+
+    it('an idempotent retry succeeds for a collector even after their assignment window has since lapsed', async () => {
+      const { loanId, clientId } = await seedLoanWithStatus('active');
+      const collectorId = randomUUID();
+      const roleId = (await pool!.query<{ id: string }>(`INSERT INTO roles (code, name) VALUES ($1, 'Collector') RETURNING id`, [`collector-${randomUUID()}`])).rows[0].id;
+      await pool!.query(`INSERT INTO users (id, firebase_uid, display_name, role_id, branch_id) VALUES ($1, $2, 'Lapsing Collector', $3, $4)`, [collectorId, `collector-${collectorId}`, roleId, branchId]);
+      const assignment = await pool!.query<{ id: string }>(`INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code, effective_from) VALUES ($1, $2, $3, 'ROUTE-2', CURRENT_DATE - INTERVAL '30 days') RETURNING id`, [collectorId, clientId, branchId]);
+      const key = `lapsed-${loanId}`;
+      // First call: assignment is valid, payment succeeds normally.
+      const first = await postManualPayment({ actorUserId: collectorId, actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: key, correlationId: randomUUID() });
+      expect(first.created).toBe(true);
+      // Assignment lapses (route reassigned, collector reassigned elsewhere, etc.) sometime after.
+      await pool!.query(`UPDATE collector_assignments SET effective_to = CURRENT_DATE - INTERVAL '1 day' WHERE id = $1`, [assignment.rows[0].id]);
+      // Same idempotency key, same collector — must still return the original result, not fail
+      // COLLECTOR_NOT_ASSIGNED because of a lapse that happened after the original payment posted.
+      const retry = await postManualPayment({ actorUserId: collectorId, actorRole: 'collector', loanId, branchId, amount: 10000, idempotencyKey: key, correlationId: randomUUID() });
+      expect(retry).toMatchObject({ paymentId: first.paymentId, created: false });
+    });
+
+    it('maps a known business-rule error to its HTTP status instead of a generic 500', async () => {
+      const { loanId } = await seedLoanWithStatus('approved');
+      const app = Fastify();
+      const verifier: TokenVerifier = async () => ({ uid: `http-guard-${userId}` }) as never;
+      const resolveUser: UserResolver = async () => ({ dbUserId: userId, db_user_id: userId, firebaseUid: `http-guard-${userId}`, firebase_uid: `http-guard-${userId}`, role: 'manager', branchId, branch_id: branchId, clientId: null, client_id: null, permissions: [] });
+      registerPaymentRoutes(app, verifier, resolveUser);
+      await app.ready();
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/payments',
+        headers: { authorization: 'Bearer valid' },
+        payload: { loanId, branchId, amount: 10000, idempotencyKey: `http-${loanId}` },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'LOAN_NOT_PAYABLE' } });
+      await app.close();
     });
   });
 
