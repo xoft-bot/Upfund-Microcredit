@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { AuthIdentity } from '../../services/firebase.js';
 import { getFirebaseIdToken } from '../../services/firebase.js';
-import { getAccountantReport } from '../../services/api.js';
+import { ApiRequestError, getAccountantReport } from '../../services/api.js';
 import type { AccountantReportingSnapshot } from '../../../../shared/reporting.js';
 
 interface AccountantAuditDashboardProps { identity: AuthIdentity; }
@@ -30,7 +30,14 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
       if (!token) throw new Error('AUTH_TOKEN_UNAVAILABLE');
       setSnapshot(await getAccountantReport(token, { ...filters, branchId: identity.role === 'admin' ? filters.branchId : identity.branchId ?? undefined }));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'ACCOUNTING_REPORT_LOAD_FAILED');
+      // Same fix as ManagerAnalyticsDashboard: check the real ApiRequestError.code here,
+      // not a substring match on the stringified .message at render time (the server's
+      // 403 message is 'Insufficient role', which never contains '403' or 'FORBIDDEN').
+      setError(
+        loadError instanceof ApiRequestError && loadError.code === 'FORBIDDEN'
+          ? 'Your account is not authorized to view accounting reports.'
+          : loadError instanceof Error ? loadError.message : 'ACCOUNTING_REPORT_LOAD_FAILED',
+      );
     } finally {
       setLoading(false);
     }
@@ -46,7 +53,7 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
   const totalDebits = useMemo(() => snapshot?.trialBalance.reduce((sum, row) => sum + row.debitTotal, 0) ?? 0, [snapshot]);
   const totalCredits = useMemo(() => snapshot?.trialBalance.reduce((sum, row) => sum + row.creditTotal, 0) ?? 0, [snapshot]);
   if (loading && !snapshot) return <section className="reporting-shell portal-card" aria-labelledby="accounting-title"><p className="eyebrow">Accounting & audit</p><h3 id="accounting-title">Loading accounting snapshot…</h3><p className="empty-state" role="status">Reading posted journal entries and reconciliation evidence.</p></section>;
-  if (error && !snapshot) return <section className="reporting-shell portal-card" aria-labelledby="accounting-title"><p className="eyebrow">Accounting & audit</p><h3 id="accounting-title">Accounting view unavailable</h3><p className="form-error" role="alert">{error.includes('403') || error.includes('FORBIDDEN') ? 'Your account is not authorized to view accounting reports.' : error}</p><button className="primary-button" type="button" onClick={() => void load()}>Retry</button></section>;
+  if (error && !snapshot) return <section className="reporting-shell portal-card" aria-labelledby="accounting-title"><p className="eyebrow">Accounting & audit</p><h3 id="accounting-title">Accounting view unavailable</h3><p className="form-error" role="alert">{error}</p><button className="primary-button" type="button" onClick={() => void load()}>Retry</button></section>;
   if (!snapshot) return null;
 
   return <section className="reporting-shell" aria-labelledby="accounting-title">

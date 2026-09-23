@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { AuthIdentity } from '../../services/firebase.js';
 import { getFirebaseIdToken } from '../../services/firebase.js';
-import { getManagerReport } from '../../services/api.js';
+import { ApiRequestError, getManagerReport } from '../../services/api.js';
 import type { ManagerReportingSnapshot } from '../../../../shared/reporting.js';
 
 interface ManagerAnalyticsDashboardProps { identity: AuthIdentity; }
@@ -34,7 +34,16 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
       if (!token) throw new Error('AUTH_TOKEN_UNAVAILABLE');
       setSnapshot(await getManagerReport(token, { ...filters, branchId: identity.role === 'admin' ? filters.branchId : identity.branchId ?? undefined }));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'REPORTING_LOAD_FAILED');
+      // The server sends a structured { code, message } error body — check the real
+      // ApiRequestError.code here, where the actual error object is still available,
+      // rather than substring-matching a stringified .message at render time (the
+      // message for a 403 is 'Insufficient role', which never contains '403' or
+      // 'FORBIDDEN' as text, so that check never actually matched).
+      setError(
+        loadError instanceof ApiRequestError && loadError.code === 'FORBIDDEN'
+          ? 'Your account is not authorized to view manager reporting.'
+          : loadError instanceof Error ? loadError.message : 'REPORTING_LOAD_FAILED',
+      );
     } finally {
       setLoading(false);
     }
@@ -49,7 +58,7 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
 
   const dailyMax = useMemo(() => Math.max(1, ...(snapshot?.dailyCollections.map((item) => item.reconciledAmount + item.pendingAmount) ?? [])), [snapshot]);
   if (loading && !snapshot) return <section className="reporting-shell portal-card" aria-labelledby="reporting-title"><p className="eyebrow">Manager analytics</p><h3 id="reporting-title">Loading reporting snapshot…</h3><p className="empty-state" role="status">Reading server-authoritative portfolio data.</p></section>;
-  if (error && !snapshot) return <section className="reporting-shell portal-card" aria-labelledby="reporting-title"><p className="eyebrow">Manager analytics</p><h3 id="reporting-title">Reporting unavailable</h3><p className="form-error" role="alert">{error.includes('403') || error.includes('FORBIDDEN') ? 'Your account is not authorized to view manager reporting.' : error}</p><button className="primary-button" type="button" onClick={() => void load()}>Retry</button></section>;
+  if (error && !snapshot) return <section className="reporting-shell portal-card" aria-labelledby="reporting-title"><p className="eyebrow">Manager analytics</p><h3 id="reporting-title">Reporting unavailable</h3><p className="form-error" role="alert">{error}</p><button className="primary-button" type="button" onClick={() => void load()}>Retry</button></section>;
   if (!snapshot) return null;
 
   return <section className="reporting-shell" aria-labelledby="reporting-title">
