@@ -68,12 +68,12 @@ async function readPortfolio(input: NormalizedReportingInput): Promise<ManagerRe
          AND l.status IN ('disbursed', 'active', 'overdue', 'defaulted')
      ),
      posted_by_schedule AS (
-       SELECT p.schedule_id, SUM(p.principal_amount) AS principal_paid
-       FROM payments p, params x
+       SELECT pi.schedule_id, SUM(pi.principal_amount) AS principal_paid
+       FROM payment_installments pi
+       JOIN payments p ON p.id = pi.payment_id, params x
        WHERE p.status = 'posted'
-         AND p.schedule_id IS NOT NULL
          AND p.created_at::date <= x.as_of
-       GROUP BY p.schedule_id
+       GROUP BY pi.schedule_id
      ),
      overdue_loans AS (
        SELECT s.loan_id,
@@ -94,10 +94,15 @@ async function readPortfolio(input: NormalizedReportingInput): Promise<ManagerRe
        WHERE (x.branch_id IS NULL OR l.branch_id = x.branch_id)
          AND s.due_on BETWEEN x.from_date AND x.to_date
      ),
+     -- Joins through payment_installments (the actual per-installment split) rather than
+     -- payments.schedule_id, which only ever points at the FIRST installment a payment touched
+     -- — a payment spanning two installments would otherwise have its whole amount attributed
+     -- to one due_on, dropping out of (or wrongly counting inside) every other window.
      realized_window AS (
-       SELECT COALESCE(SUM(p.principal_amount + p.penalty_amount + p.interest_amount), 0) AS realized_due_amount
-       FROM payments p
-       JOIN repayment_schedules s ON s.id = p.schedule_id
+       SELECT COALESCE(SUM(pi.principal_amount + pi.penalty_amount + pi.interest_amount), 0) AS realized_due_amount
+       FROM payment_installments pi
+       JOIN payments p ON p.id = pi.payment_id
+       JOIN repayment_schedules s ON s.id = pi.schedule_id
        JOIN loans l ON l.id = p.loan_id
        CROSS JOIN params x
        WHERE (x.branch_id IS NULL OR l.branch_id = x.branch_id)

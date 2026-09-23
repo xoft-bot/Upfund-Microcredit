@@ -283,7 +283,10 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
   );
   if (!updated.rowCount) throw new Error('LOAN_BALANCE_GUARD_FAILED');
   // One UPDATE per installment this payment actually touched (almost always one; more than
-  // one only when the payment covered a prior installment's shortfall too).
+  // one only when the payment covered a prior installment's shortfall too). payment_installments
+  // records the same per-installment split so reporting can attribute this payment's amount to
+  // the correct due date(s) instead of guessing from payments.schedule_id (which only ever
+  // points at the first installment touched, even when a payment spans several).
   for (const update of installmentUpdates) {
     const scheduleUpdate = await client.query(
       `UPDATE repayment_schedules
@@ -296,6 +299,11 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
       [update.principalAmount, update.penaltyAmount, update.interestAmount, update.chargeAmount, update.nowPaid ? 'paid' : 'open', update.id],
     );
     if (!scheduleUpdate.rowCount) throw new Error('SCHEDULE_UPDATE_FAILED');
+    await client.query(
+      `INSERT INTO payment_installments (payment_id, schedule_id, principal_amount, penalty_amount, interest_amount)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [paymentId, update.id, update.principalAmount, update.penaltyAmount, update.interestAmount],
+    );
   }
   const creditLines = [
     { accountCode: 'loan.principal', side: 'credit' as const, amount: allocation.principalAmount },

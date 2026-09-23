@@ -151,6 +151,41 @@ suite('Manager reporting read models', () => {
     ]));
   });
 
+  it('attributes a payment that spans two installments to each installment\'s own due date', async () => {
+    // Reproduces the bug directly: installment 1 due 60 days ago (outside the 30-day window
+    // below), installment 2 due yesterday (inside it). One payment catches up both. Before the
+    // payment_installments fix, the whole payment was attributed to installment 1's due_on
+    // (via payments.schedule_id, which only ever pointed at the first installment touched) and
+    // dropped out of the window entirely — realizedDueAmount and collectionEfficiency both
+    // silently read 0 despite everything due in the window having actually been collected.
+    const loanId = randomUUID();
+    const clientId = randomUUID();
+    const productId = randomUUID();
+    const applicationId = randomUUID();
+    const client = await pool!.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, 'Split Payment Client')`, [clientId, branchId, `report-client-${clientId}`]);
+      await client.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Reporting Product')`, [productId, `report-product-${productId}`]);
+      await client.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by) VALUES ($1, $2, $3, $4, 100000, $5)`, [applicationId, clientId, productId, branchId, userId]);
+      await client.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 100000, 100000, 'active')`, [loanId, applicationId, clientId, branchId]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, $3, 50000, 0)`, [randomUUID(), loanId, dateOffset(-60)]);
+      await client.query(`INSERT INTO repayment_schedules (id, loan_id, due_on, principal_due, charge_due) VALUES ($1, $2, $3, 50000, 0)`, [randomUUID(), loanId, dateOffset(-1)]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    await postManualPayment({ actorUserId: userId, loanId, branchId, clientId, amount: 100000, idempotencyKey: `report-split-${loanId}`, correlationId: randomUUID() });
+
+    const snapshot = await getManagerReportingSnapshot({ branchId, asOf: today, from: dateOffset(-30), to: today });
+    // Only installment 2 (50,000) is due within this 30-day window; installment 1 is outside it.
+    expect(snapshot.summary.scheduledAmount).toBeGreaterThanOrEqual(50_000);
+    expect(snapshot.summary.realizedDueAmount).toBeGreaterThanOrEqual(50_000);
+  });
+
   it('enforces the protected manager endpoint and branch scope', async () => {
     const app = buildApp({
       tokenVerifier: async () => ({ uid: firebaseUid } as never),
