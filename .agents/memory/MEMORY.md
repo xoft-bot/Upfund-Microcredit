@@ -1,5 +1,6 @@
 - [API codegen compatibility](api-codegen-compatibility.md) — OpenAPI integer fields can emit an unsupported zod.int() helper in this workspace.
 - [Mockup sandbox setup](mockup-sandbox-setup.md) — newly created preview artifacts may need isolated dependencies installed before Vite can start.
+- [Local Postgres startup](local-postgres-startup.md) — the Nix module only installs binaries; run scripts/start-db.sh every fresh session, don't hand-roll startup.
 - [Database verification](database-verification.md) — verify the active development schema instead of relying on imported audit or handoff claims.
 - [Preview tooling](preview-tooling.md) — imported Vite/ESLint versions need project-scoped checks and a web-preview-compatible client port.
 - [Reconciliation controls](reconciliation-controls.md) — lock the full automated cycle and allocate surplus only from realized charge components.

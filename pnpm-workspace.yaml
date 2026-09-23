@@ -3,5 +3,18 @@ packages:
   - "client"
   - "server"
 overrides:
+  # SECURITY: fast-uri <3.1.6 has multiple high-severity host-confusion/SSRF
+  # advisories; transitive dep of the real fastify server, not scaffold noise.
   "fast-uri": ">=3.1.6"
+  # SECURITY: dev/build-chain only (not in the production server bundle),
+  # but real per `pnpm audit --audit-level high` — fixed cheaply rather than
+  # leave a permanent red flag in every audit run.
+  # brace-expansion DoS (GHSA-rgw5-rvv9-x895): only override it under the
+  # newer minimatch@10 chain (used by @typescript-eslint) — a global override
+  # breaks eslint's own minimatch@3.1.5, which needs brace-expansion@1.x's
+  # API (brace-expansion 5.x is a breaking rewrite; ESLint fails at runtime
+  # with "expand is not a function" if forced onto it).
+  "minimatch@10>brace-expansion": ">=5.0.9"
+  "nanoid": ">=3.3.18"
+  "uuid": ">=11.1.1"
   "@esbuild-loader/esm-loader": "npm:tsx@^4.21.0"

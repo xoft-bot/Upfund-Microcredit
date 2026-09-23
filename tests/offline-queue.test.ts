@@ -18,7 +18,7 @@ describe('offline collection queue', () => {
     await queue.updateStatus(record.localId, 'Needs review', 'CONFLICT');
     const records = await queue.getRecords();
     expect(records[0]).toMatchObject({ localId: 'local-1', status: 'Needs review', syncState: 'conflict', lastError: 'CONFLICT' });
-    expect(JSON.parse(storage.get('letsgrow-field-ops-queue') ?? '{}').records).toHaveLength(1);
+    expect(JSON.parse(storage.get('letsgrow-field-ops-queue:anonymous') ?? '{}').records).toHaveLength(1);
   });
 
   it('replays queued records once and preserves the idempotency key', async () => {
@@ -71,5 +71,62 @@ describe('offline collection queue', () => {
     await queue.processQueued();
     expect((await queue.getRecords())[0]).toMatchObject({ status: 'Needs review', syncState: 'conflict', lastError: 'Loan already settled' });
     vi.unstubAllGlobals();
+  });
+
+  describe('per-user storage isolation', () => {
+    it('does not surface one user\'s queued records to a different user on the same device', async () => {
+      // Regression test: the queue used to use a single fixed storage key
+      // regardless of who was signed in, so on a shared device, whoever was
+      // currently logged in would see (and could unknowingly trigger a sync
+      // of) another user's queued financial records.
+      const queue = new OfflineQueue(async () => ({ ok: true }));
+      await queue.bindUser('officer-a-uid');
+      await queue.enqueue(record);
+      expect(await queue.getRecords()).toHaveLength(1);
+
+      await queue.bindUser('officer-b-uid');
+      expect(await queue.getRecords()).toHaveLength(0);
+
+      // Switching back to officer A's namespace still has their record —
+      // this isn't clearing data, only isolating it per user.
+      await queue.bindUser('officer-a-uid');
+      expect(await queue.getRecords()).toHaveLength(1);
+    });
+
+    it('treats signed-out (no uid) as its own isolated namespace, separate from any signed-in user', async () => {
+      const queue = new OfflineQueue(async () => ({ ok: true }));
+      await queue.bindUser(undefined);
+      await queue.enqueue(record);
+      expect(await queue.getRecords()).toHaveLength(1);
+
+      await queue.bindUser('officer-a-uid');
+      expect(await queue.getRecords()).toHaveLength(0);
+    });
+  });
+
+  describe('stale record surfacing', () => {
+    it('flags an unsynced record captured well past the staleness threshold, without deleting it', async () => {
+      const staleAfterMs = 1000 * 60 * 60; // 1 hour, for a fast test
+      const queue = new OfflineQueue(async () => ({ ok: true }), staleAfterMs);
+      const oldRecord: FieldCollectionRecord = { ...record, localId: 'local-old', capturedAt: new Date(Date.now() - staleAfterMs * 2).toISOString() };
+      await queue.enqueue(oldRecord);
+
+      const stale = await queue.getStaleRecords();
+      expect(stale.map((item) => item.localId)).toEqual(['local-old']);
+
+      const metrics = await (await queue.getSnapshot()).metrics;
+      expect(metrics?.stale).toBe(1);
+
+      // Still present and unmodified — surfaced for follow-up, not deleted.
+      expect(await queue.getRecords()).toHaveLength(1);
+    });
+
+    it('does not flag a record that has already posted, however old it is', async () => {
+      const staleAfterMs = 1000 * 60 * 60;
+      const queue = new OfflineQueue(async () => ({ ok: true }), staleAfterMs);
+      const oldPostedRecord: FieldCollectionRecord = { ...record, localId: 'local-old-posted', status: 'Posted', capturedAt: new Date(Date.now() - staleAfterMs * 2).toISOString() };
+      await queue.enqueue(oldPostedRecord);
+      expect(await queue.getStaleRecords()).toHaveLength(0);
+    });
   });
 });

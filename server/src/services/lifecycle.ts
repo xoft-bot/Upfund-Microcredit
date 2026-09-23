@@ -179,7 +179,16 @@ async function recordApplicationTransition(client: DbClient, applicationId: stri
 export async function getPortalOverview(actor: Actor): Promise<PortalOverview> {
   const applicationScope = scopeFor(actor, 'la');
   const loanScope = scopeFor(actor, 'l');
-  const clientScope = scopeFor(actor, 'c');
+  // BUG FIX: the clients table's own primary key is `id`, not `client_id` —
+  // `client_id` is only a foreign-key column on loan_applications/loans.
+  // scopeFor(actor, 'c') without this override built `c.client_id = $1`
+  // for the 'client' role, a column that doesn't exist on `clients`,
+  // throwing a real Postgres error and 500ing this whole endpoint for
+  // every client-role account. Every other role either bypasses this
+  // check (admin/marketing get an unconditional TRUE) or scopes by
+  // branch_id (a column `clients` genuinely has), which is why this only
+  // ever surfaced for the 'client' role.
+  const clientScope = scopeFor(actor, 'c', 'id');
   const isMarketing = actor.role === 'marketing';
 
   const [metricsResult, applicationsResult, loansResult, clientsResult, productsResult] = await Promise.all([

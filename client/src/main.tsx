@@ -17,7 +17,7 @@ const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
 const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
 const LazyManagerVarianceDashboard = lazy(async () => { const module = await import('./components/field/ManagerVarianceDashboard.js'); return { default: module.ManagerVarianceDashboard }; });
 const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
-const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0 };
+const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0, stale: 0 };
 const COLLECTION_QUEUE_ROLES = ['admin', 'manager', 'officer', 'collector'];
 
 function getDeviceId(): string {
@@ -98,6 +98,11 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    // Bind the offline queue's storage to whoever is currently authenticated
+    // (or the anonymous namespace on sign-out) before touching any queued
+    // records — see OfflineQueue.bindUser for why this matters on shared
+    // devices.
+    void queue.bindUser(session?.uid);
     if (!session) { setIdentity(null); setIdentityError(''); setServerRecords([]); setReconciliationBatches([]); setAssignedLoans([]); return () => { active = false; }; }
     setIdentityLoading(true);
     void (async () => {
@@ -110,18 +115,33 @@ function App() {
         setIdentity(nextIdentity);
         setIdentityError('');
         await queue.retry();
-        if (COLLECTION_QUEUE_ROLES.includes(nextIdentity.role)) {
-          const collections = await getCollectionQueue(token);
+        // Admins have no branchId of their own (they're a cross-branch
+        // role) — the server already supports admins passing one
+        // explicitly via a query param, but there's no branch-picker UI
+        // yet. Until there is, an admin can bookmark/visit
+        // ?branchId=<id> to view that branch's queues; with none given,
+        // skip these branch-scoped calls entirely instead of erroring —
+        // an admin viewing no specific branch has nothing branch-scoped
+        // to show, which isn't a failure.
+        const adminSelectedBranchId = nextIdentity.role === 'admin'
+          ? new URLSearchParams(window.location.search).get('branchId') ?? undefined
+          : undefined;
+        const canLoadBranchScoped = nextIdentity.role !== 'admin' || Boolean(adminSelectedBranchId);
+        if (COLLECTION_QUEUE_ROLES.includes(nextIdentity.role) && canLoadBranchScoped) {
+          const collections = await getCollectionQueue(token, { branchId: adminSelectedBranchId });
           if (active) setServerRecords(collections.records.map(serverRecordToFieldRecord));
         } else if (active) setServerRecords([]);
         if (['collector', 'officer'].includes(nextIdentity.role)) {
           const assigned = await getAssignedLoans(token);
           if (active) setAssignedLoans(assigned.loans);
         } else if (active) setAssignedLoans([]);
-        if (['admin', 'manager'].includes(nextIdentity.role)) {
-          const reconciliations = await getReconciliationQueue(token);
+        if (['admin', 'manager'].includes(nextIdentity.role) && canLoadBranchScoped) {
+          const reconciliations = await getReconciliationQueue(token, { branchId: adminSelectedBranchId });
           if (active) setReconciliationBatches(reconciliations.batches);
         } else if (active) setReconciliationBatches([]);
+        if (active && nextIdentity.role === 'admin' && !adminSelectedBranchId) {
+          setIdentityError('Admin view: add ?branchId=<id> to the URL to see that branch\'s queues.');
+        }
       } catch (error) {
         if (active) {
           setIdentity(null);
@@ -185,7 +205,10 @@ function App() {
         {authLoading ? <p className="empty-state" role="status">Loading authenticated workspace…</p>
           : !session ? <SignInCard />
             : identityLoading ? <p className="empty-state" role="status">Loading your authorized workspace…</p>
-              : identity ? <p className="auth-context" role="status">Signed in as {session.email ?? session.uid} · {identity.role} · Branch: {identity.branchId ?? 'Unassigned'}</p>
+              : identity ? <>
+                <p className="auth-context" role="status">Signed in as {session.email ?? session.uid} · {identity.role} · Branch: {identity.branchId ?? 'Unassigned'}</p>
+                {identityError && <p className="form-error" role="status">{identityError}</p>}
+              </>
                 : <p className="form-error" role="alert">{identityError || 'This account is not authorized for field operations.'}</p>}
       </header>
 

@@ -2,12 +2,14 @@ import type { CollectionBatch, CollectionStatus, FieldCollectionRecord, QueueMet
 import { telemetry } from './telemetry.js';
 import { ApiRequestError, postPayment } from './api.js';
 
-const databaseName = 'letsgrow-field-ops';
+const databasePrefix = 'letsgrow-field-ops';
 const databaseVersion = 1;
 const eventStore = 'collection-events';
 const stateStore = 'collection-state';
 const batchStore = 'batch-state';
-const fallbackKey = 'letsgrow-field-ops-queue';
+const fallbackKeyPrefix = 'letsgrow-field-ops-queue';
+const anonymousNamespace = 'anonymous';
+const defaultStaleAfterMs = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 type QueueEvent = { id?: number; localId: string; kind: 'recorded' | 'status'; record?: FieldCollectionRecord; status?: CollectionStatus; at: string };
 type SyncResponse = { ok: boolean; data?: { receiptReference?: string }; error?: { code?: string; message?: string } };
@@ -17,8 +19,17 @@ type QueueChangeListener = (snapshot: QueueSnapshot) => void;
 
 function now(): string { return new Date().toISOString(); }
 function isBrowser(): boolean { return typeof window !== 'undefined'; }
-function readFallback(): QueueSnapshot { if (!isBrowser()) return { records: [], batches: [] }; const value = window.localStorage.getItem(fallbackKey); return value ? JSON.parse(value) as QueueSnapshot : { records: [], batches: [] }; }
-function writeFallback(snapshot: QueueSnapshot): void { if (isBrowser()) window.localStorage.setItem(fallbackKey, JSON.stringify(snapshot)); }
+// SECURITY: storage is namespaced per authenticated user (Firebase uid) so
+// that on a shared/multi-collector device, signing in as a different user
+// never surfaces — or gets treated as belonging to — another user's queued,
+// unsynced financial records. See bindUser().
+function databaseNameFor(namespace: string): string { return `${databasePrefix}:${namespace}`; }
+function fallbackKeyFor(namespace: string): string { return `${fallbackKeyPrefix}:${namespace}`; }
+function isStale(record: FieldCollectionRecord, staleAfterMs: number): boolean {
+  if (record.status === 'Posted') return false;
+  const capturedAt = Date.parse(record.capturedAt);
+  return Number.isFinite(capturedAt) && Date.now() - capturedAt > staleAfterMs;
+}
 function syncStateFor(status: CollectionStatus): SyncState {
   return status === 'Queued' || status === 'Pending reconciliation' ? 'queued'
     : status === 'Syncing' ? 'syncing'
@@ -29,29 +40,57 @@ function syncStateFor(status: CollectionStatus): SyncState {
 
 export class OfflineQueue {
   private readonly processPayment: PaymentSync;
+  private readonly staleAfterMs: number;
   private database?: IDBDatabase;
   private processing = false;
   private onlineHandler?: () => void;
   private opening?: Promise<void>;
+  private namespace = anonymousNamespace;
   private readonly listeners = new Set<QueueChangeListener>();
 
-  constructor(processPayment: PaymentSync) { this.processPayment = processPayment; }
+  constructor(processPayment: PaymentSync, staleAfterMs = defaultStaleAfterMs) { this.processPayment = processPayment; this.staleAfterMs = staleAfterMs; }
+
+  // Switches the queue's storage to the given user's namespace. Call this
+  // whenever the authenticated identity changes (sign-in, sign-out, switch
+  // user) — typically before any other queue read/write for that session.
+  // A no-op if already bound to the same namespace, so it's safe to call on
+  // every auth-state change without worrying about redundant reopens.
+  async bindUser(uid: string | undefined): Promise<void> {
+    const nextNamespace = uid?.trim() || anonymousNamespace;
+    if (nextNamespace === this.namespace && (this.database || !isBrowser())) return;
+    this.stop();
+    this.database?.close();
+    this.database = undefined;
+    this.opening = undefined;
+    this.namespace = nextNamespace;
+    await this.open();
+    await this.notify();
+  }
+
+  private readFallback(): QueueSnapshot { if (!isBrowser()) return { records: [], batches: [] }; const value = window.localStorage.getItem(fallbackKeyFor(this.namespace)); return value ? JSON.parse(value) as QueueSnapshot : { records: [], batches: [] }; }
+  private writeFallback(snapshot: QueueSnapshot): void { if (isBrowser()) window.localStorage.setItem(fallbackKeyFor(this.namespace), JSON.stringify(snapshot)); }
 
   async open(): Promise<void> {
     if (this.opening) return this.opening;
     this.opening = (async () => {
       if (!isBrowser() || !('indexedDB' in window)) return;
-      this.database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = window.indexedDB.open(databaseName, databaseVersion);
+      const namespaceAtOpenStart = this.namespace;
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = window.indexedDB.open(databaseNameFor(namespaceAtOpenStart), databaseVersion);
         request.onerror = () => reject(request.error ?? new Error('INDEXED_DB_OPEN_FAILED'));
         request.onupgradeneeded = () => {
-          const db = request.result;
-          if (!db.objectStoreNames.contains(eventStore)) db.createObjectStore(eventStore, { keyPath: 'id', autoIncrement: true });
-          if (!db.objectStoreNames.contains(stateStore)) db.createObjectStore(stateStore, { keyPath: 'localId' });
-          if (!db.objectStoreNames.contains(batchStore)) db.createObjectStore(batchStore, { keyPath: 'localId' });
+          const upgrade = request.result;
+          if (!upgrade.objectStoreNames.contains(eventStore)) upgrade.createObjectStore(eventStore, { keyPath: 'id', autoIncrement: true });
+          if (!upgrade.objectStoreNames.contains(stateStore)) upgrade.createObjectStore(stateStore, { keyPath: 'localId' });
+          if (!upgrade.objectStoreNames.contains(batchStore)) upgrade.createObjectStore(batchStore, { keyPath: 'localId' });
         };
         request.onsuccess = () => resolve(request.result);
       });
+      // bindUser() may have switched namespaces again while this open() was
+      // in flight — if so, this connection is for a stale namespace and
+      // should not become `this.database`.
+      if (this.namespace !== namespaceAtOpenStart) { db.close(); return; }
+      this.database = db;
     })();
     return this.opening;
   }
@@ -75,10 +114,19 @@ export class OfflineQueue {
 
   async getSnapshot(): Promise<QueueSnapshot> {
     const [records, batches] = await Promise.all([this.getRecords(), this.getBatches()]);
-    return { records, batches, metrics: metricsFor(records) };
+    return { records, batches, metrics: metricsFor(records, this.staleAfterMs) };
   }
 
-  getMetrics(records: FieldCollectionRecord[]): QueueMetrics { return metricsFor(records); }
+  getMetrics(records: FieldCollectionRecord[]): QueueMetrics { return metricsFor(records, this.staleAfterMs); }
+
+  // Records captured offline more than staleAfterMs ago and still not
+  // Posted — surfaced so a manager/officer can follow up (resync the
+  // device, or manually confirm the collection another way), rather than
+  // silently deleting unsynced financial records, which would risk losing
+  // track of cash that was actually collected.
+  async getStaleRecords(): Promise<FieldCollectionRecord[]> {
+    return (await this.getRecords()).filter((record) => isStale(record, this.staleAfterMs));
+  }
 
   async retry(): Promise<void> { await this.open(); await this.processQueued(); }
 
@@ -88,7 +136,7 @@ export class OfflineQueue {
   }
 
   async enqueueBatch(batch: CollectionBatch): Promise<void> {
-    if (!this.database) { const snapshot = readFallback(); snapshot.batches = [...snapshot.batches.filter((item) => item.localId !== batch.localId), batch]; snapshot.lastProcessedAt = now(); writeFallback(snapshot); await this.notify(); return; }
+    if (!this.database) { const snapshot = this.readFallback(); snapshot.batches = [...snapshot.batches.filter((item) => item.localId !== batch.localId), batch]; snapshot.lastProcessedAt = now(); this.writeFallback(snapshot); await this.notify(); return; }
     await new Promise<void>((resolve, reject) => {
       const transaction = this.database!.transaction([batchStore], 'readwrite');
       transaction.objectStore(batchStore).put(batch);
@@ -120,9 +168,9 @@ export class OfflineQueue {
     await this.append({ localId, kind: 'status', status, at: updated.updatedAt }, updated);
   }
 
-  async getRecords(): Promise<FieldCollectionRecord[]> { return this.database ? this.readIndexedRecords() : readFallback().records; }
+  async getRecords(): Promise<FieldCollectionRecord[]> { return this.database ? this.readIndexedRecords() : this.readFallback().records; }
   async getBatches(): Promise<CollectionBatch[]> {
-    if (!this.database) return readFallback().batches;
+    if (!this.database) return this.readFallback().batches;
     return new Promise<CollectionBatch[]>((resolve, reject) => {
       const request = this.database!.transaction(batchStore, 'readonly').objectStore(batchStore).getAll();
       request.onsuccess = () => resolve(request.result as CollectionBatch[]);
@@ -153,7 +201,7 @@ export class OfflineQueue {
   }
 
   private async append(event: QueueEvent, state: FieldCollectionRecord): Promise<void> {
-    if (!this.database) { const snapshot = readFallback(); snapshot.records = [...snapshot.records.filter((item) => item.localId !== state.localId), state]; snapshot.lastProcessedAt = now(); writeFallback(snapshot); await this.notify(); return; }
+    if (!this.database) { const snapshot = this.readFallback(); snapshot.records = [...snapshot.records.filter((item) => item.localId !== state.localId), state]; snapshot.lastProcessedAt = now(); this.writeFallback(snapshot); await this.notify(); return; }
     await new Promise<void>((resolve, reject) => {
       const transaction = this.database!.transaction([eventStore, stateStore], 'readwrite');
       transaction.objectStore(eventStore).add(event);
@@ -179,14 +227,15 @@ export class OfflineQueue {
   }
 }
 
-function metricsFor(records: FieldCollectionRecord[]): QueueMetrics {
+function metricsFor(records: FieldCollectionRecord[], staleAfterMs: number): QueueMetrics {
   return records.reduce<QueueMetrics>((metrics, record) => {
     if (record.status === 'Queued' || record.status === 'Pending reconciliation') metrics.queued += 1;
     if (record.status === 'Syncing') metrics.syncing += 1;
     if (record.status === 'Rejected') metrics.rejected += 1;
     if (record.status === 'Needs review') metrics.conflict += 1;
+    if (isStale(record, staleAfterMs)) metrics.stale += 1;
     return metrics;
-  }, { queued: 0, syncing: 0, rejected: 0, conflict: 0 });
+  }, { queued: 0, syncing: 0, rejected: 0, conflict: 0, stale: 0 });
 }
 
 export function createPaymentSync(getToken: TokenProvider = async () => undefined, apiBaseUrl = ''): PaymentSync {
