@@ -1,0 +1,7 @@
+diff --git a/server/src/routes/payments.ts b/server/src/routes/payments.ts
+index 1111111..2222222 100644
+--- a/server/src/routes/payments.ts
++++ b/server/src/routes/payments.ts
+@@ -10,3 +10,4 @@ export const PAYMENT_ERROR_STATUS = {
++  PAYMENT_IDEMPOTENCY_CONFLICT: { status: 409, code: 'PAYMENT_IDEMPOTENCY_CONFLICT', message: 'This idempotency key was already used for a different payment' },
+ };
