@@ -34,3 +34,17 @@ export function statusTone(status: unknown): Tone {
   if (WARN.has(value)) return 'warn';
   return 'neutral';
 }
+
+/** Plain grouped number, no currency suffix (used in dense "paid of due" cells). */
+export function formatAmount(value: unknown): string {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (value === null || value === undefined || value === '' || !Number.isFinite(n)) return '–';
+  return new Intl.NumberFormat('en-UG', { maximumFractionDigits: 0 }).format(n);
+}
+
+export function formatDateTime(value: unknown): string {
+  if (typeof value !== 'string' || !value) return '–';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '–';
+  return date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}

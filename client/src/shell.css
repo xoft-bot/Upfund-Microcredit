@@ -129,3 +129,23 @@
   .ql-table td.ql-open::before { content: none; }
   .ql-person { text-align: right; }
 }
+
+/* --- Phase 3b: record workspaces ------------------------------------------------ */
+.rec-back { display: inline-block; margin-bottom: 8px; font-size: .85rem; text-decoration: none; }
+.rec-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.rec-head h1 { margin: 0; font-size: 1.3rem; line-height: 1.25; }
+.rec-sub { margin: 2px 0 0; color: var(--sh-muted); }
+.rec-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+.rec-card { background: var(--sh-surface); border: 1px solid var(--sh-line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.rec-card.is-wide { grid-column: 1 / -1; }
+.rec-card h2 { margin: 0 0 10px; font-size: .95rem; }
+.rec-facts { display: grid; gap: 8px; margin: 0; }
+.rec-facts div { display: grid; grid-template-columns: 9.5rem 1fr; gap: 8px; }
+.rec-facts dt { color: var(--sh-muted); font-size: .84rem; }
+.rec-facts dd { margin: 0; overflow-wrap: anywhere; }
+.rec-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.rec-timeline li { display: grid; gap: 1px; padding-left: 12px; border-left: 3px solid var(--sh-line); }
+.rec-timeline span, .rec-timeline small { color: var(--sh-muted); font-size: .82rem; }
+.rec-links { margin: 0; padding-left: 18px; }
+.rec-card .note { color: var(--sh-muted); font-size: .85rem; margin: 6px 0 0; }
+@media (max-width: 640px) { .rec-facts div { grid-template-columns: 1fr; gap: 0; } .rec-grid { grid-template-columns: 1fr; } }

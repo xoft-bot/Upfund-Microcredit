@@ -153,6 +153,8 @@ export function cardsFor(role: Role): ActionCard[] { return ACTION_CARDS[role] ?
 export function hasSearch(role: Role): boolean { return role !== 'collector' && role !== 'marketing'; }
 /** Marketing has no read-API access, so it never calls /queues/counts. */
 export function countsEnabled(role: Role): boolean { return role !== 'marketing'; }
+/** Audit trail panel: staff who can read /audit (collector, marketing and client cannot; accountant has no record screens yet). */
+export function canViewAudit(role: Role): boolean { return role === 'admin' || role === 'manager' || role === 'officer'; }
 /** Collector and officer get a mobile bottom bar. */
 export function hasBottomBar(role: Role): boolean { return role === 'collector' || role === 'officer'; }
 
