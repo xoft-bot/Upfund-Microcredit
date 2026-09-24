@@ -67,6 +67,12 @@ describe('canAccess', () => {
   it('does not match by string prefix alone', () => {
     expect(canAccess('collector', '/loansX')).toBe(false);
   });
+  it('lets client and officer reach the draft form paths', () => {
+    expect(canAccess('client', '/apply')).toBe(true);
+    expect(canAccess('officer', '/applications/new')).toBe(true);
+    expect(canAccess('officer', '/clients/new')).toBe(true);
+    expect(canAccess('collector', '/applications/new')).toBe(false);
+  });
   it('blocks paths outside the role', () => {
     expect(canAccess('collector', '/clients')).toBe(false);
     expect(canAccess('collector', '/reconciliation')).toBe(false);
@@ -120,6 +126,7 @@ describe('breadcrumbsFor', () => {
     expect(breadcrumbsFor('admin', '/loans/due_today').map((c) => c.label)).toEqual(['Overview', 'Loans', 'Due today']);
     expect(breadcrumbsFor('admin', '/applications/record/0123456789abcdef').map((c) => c.label)).toEqual(['Overview', 'Applications', '01234567…']);
     expect(breadcrumbsFor('collector', '/loans').map((c) => c.label)).toEqual(['Today', 'My loans']);
+    expect(breadcrumbsFor('officer', '/applications/new').map((c) => c.label)).toEqual(['My work', 'Applications', 'New']);
   });
 });
 

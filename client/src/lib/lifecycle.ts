@@ -40,3 +40,23 @@ export function validateRisk(input: RiskInput): string | null {
   if (!input.rationale.trim()) return 'Explain the assessment and decision basis.';
   return null;
 }
+
+// --- Creation flows (parity with the classic "Start a request" and "Add a client" forms) ---
+/** Classic view: application drafts for officers (pick a client) and clients (own account). */
+export function canCreateApplication(role: string): boolean { return role === 'officer' || role === 'client'; }
+/** Classic view: only officers add clients. */
+export function canCreateClient(role: string): boolean { return role === 'officer'; }
+
+export function validateNewApplication(input: { productId: string; clientId: string | null | undefined; amount: string }): string | null {
+  const amount = Number(input.amount);
+  if (!input.productId || input.amount.trim() === '' || !Number.isSafeInteger(amount) || amount <= 0) return 'Choose a product and enter a positive whole amount.';
+  if (!input.clientId) return 'Select a client before creating an application.';
+  return null;
+}
+
+export function validateNewClient(input: { name: string; reference: string; branchId: string | null | undefined }): string | null {
+  if (!input.branchId) return 'This account needs a branch assignment before creating clients.';
+  if (!input.name.trim()) return 'Enter the client name.';
+  if (!input.reference.trim()) return 'Enter the external reference.';
+  return null;
+}

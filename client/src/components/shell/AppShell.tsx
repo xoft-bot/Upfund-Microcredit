@@ -15,7 +15,7 @@ export interface ShellProps {
   versionLabel: string;
 }
 /** Passed to every route via <Outlet context>. Read it with useOutletContext<ShellOutletContext>(). */
-export type ShellOutletContext = QueueCountsState & { role: Role; countsEnabled: boolean; getToken: () => Promise<string>; permissions: readonly string[] };
+export type ShellOutletContext = QueueCountsState & { role: Role; countsEnabled: boolean; getToken: () => Promise<string>; permissions: readonly string[]; branchId: string | null; clientId: string | null };
 
 function Badge({ item, counts }: { item: NavItem; counts: QueueCountsState['counts'] }) {
   if (!item.badge) return null;
@@ -35,7 +35,7 @@ export function AppShell({ identity, email, backendLive, identityError, onSignOu
 
   const crumbs = breadcrumbsFor(role, location.pathname);
   const bottomItems = hasBottomBar(role) ? items.slice(0, 4) : [];
-  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [] };
+  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [], branchId: identity.branchId ?? null, clientId: identity.clientId ?? null };
 
   return (
     <div className={`app-shell${bottomItems.length ? ' has-bottom-bar' : ''}`}>
