@@ -79,3 +79,12 @@ input, select, textarea { width: 100%; border: 1px solid #bcccdc; border-radius:
 .portal-modal h4 { color: #102a43; margin: 0 0 .75rem; }.application-timeline { border: 1px solid #e6edf3; border-radius: .75rem; margin: 1rem 0; padding: 1rem; }
 .timeline-entry { display: grid; gap: .75rem; grid-template-columns: 1rem 1fr; padding: .65rem 0; position: relative; }.timeline-entry:not(:last-child)::after { background: #d9e2ec; content: ''; height: calc(100% - .4rem); left: .43rem; position: absolute; top: 1.25rem; width: 2px; }.timeline-dot { background: #0f766e; border: 3px solid #ccfbf1; border-radius: 50%; height: .9rem; margin-top: .1rem; position: relative; width: .9rem; z-index: 1; }.timeline-entry strong, .timeline-entry small { display: block; }.timeline-entry small { color: #627d98; font-size: .75rem; margin-top: .2rem; }.timeline-entry p { color: #486581; margin: .35rem 0 0; }
 .underwriting-form { border-top: 1px solid #e6edf3; margin-top: 1rem; padding-top: 1rem; }.portal-form textarea { border: 1px solid #bcccdc; border-radius: .5rem; font: inherit; margin-top: .35rem; min-height: 5rem; padding: .65rem; resize: vertical; width: 100%; }
+
+/* Collector route layout stack */
+.collector-stack { display: flex; flex-direction: column; gap: 16px; }
+
+/* Field-collection status badges (hyphenated, matches badgeClass() in CollectorRouteView) */
+.status-posted { background: #dcfce7; color: #166534; }
+.status-syncing { background: #fef3c7; color: #92400e; }
+.status-needs-review { background: #ffedd5; color: #9a3412; }
+.status-pending-reconciliation { background: #fff8df; color: #8a5b00; }
