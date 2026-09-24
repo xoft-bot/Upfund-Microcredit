@@ -14,24 +14,30 @@ export function recordErrorText(error: unknown): string {
 
 export interface RecordState<T> { data: T | null; error: string; loading: boolean }
 
-/** Loads one record; stale responses are dropped when the key changes. */
-export function useRecord<T>(getToken: () => Promise<string>, load: (token: string) => Promise<T>, key: string): RecordState<T> {
+/**
+ * Loads one record. Stale responses are dropped. Changing `key` (a different record) resets to loading;
+ * bumping `version` (after an action) refetches silently and keeps the current data on screen.
+ */
+export function useRecord<T>(getToken: () => Promise<string>, load: (token: string) => Promise<T>, key: string, version = 0): RecordState<T> {
   const [state, setState] = useState<RecordState<T>>({ data: null, error: '', loading: true });
   const loadRef = useRef(load);
   loadRef.current = load;
+  const lastKey = useRef(key);
   useEffect(() => {
     let active = true;
-    setState({ data: null, error: '', loading: true });
+    const sameRecord = lastKey.current === key;
+    lastKey.current = key;
+    setState((previous) => (sameRecord && previous.data ? { ...previous, error: '' } : { data: null, error: '', loading: true }));
     void (async () => {
       try {
         const data = await loadRef.current(await getToken());
         if (active) setState({ data, error: '', loading: false });
       } catch (caught) {
-        if (active) setState({ data: null, error: recordErrorText(caught), loading: false });
+        if (active) setState((previous) => ({ data: sameRecord ? previous.data : null, error: recordErrorText(caught), loading: false }));
       }
     })();
     return () => { active = false; };
-  }, [key, getToken]);
+  }, [key, version, getToken]);
   return state;
 }
 

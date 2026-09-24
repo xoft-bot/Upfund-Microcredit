@@ -149,3 +149,14 @@
 .rec-links { margin: 0; padding-left: 18px; }
 .rec-card .note { color: var(--sh-muted); font-size: .85rem; margin: 6px 0 0; }
 @media (max-width: 640px) { .rec-facts div { grid-template-columns: 1fr; gap: 0; } .rec-grid { grid-template-columns: 1fr; } }
+
+/* --- Phase 3c: lifecycle actions ------------------------------------------------ */
+.act { display: grid; gap: 12px; }
+.act-block { display: grid; gap: 8px; justify-items: start; }
+.act-form { display: grid; gap: 10px; max-width: 520px; width: 100%; }
+.act-form h3 { margin: 0; font-size: .95rem; }
+.act-form label { display: grid; gap: 4px; font-size: .84rem; color: var(--sh-muted); }
+.act-form input, .act-form select, .act-form textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--sh-line); border-radius: 6px; font: inherit; color: var(--sh-ink); background: #fff; }
+.act-form textarea { min-height: 84px; resize: vertical; }
+.act-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.act-notice { margin: 0; padding: 8px 10px; border-radius: 6px; background: #dcefe3; color: #17593f; font-size: .88rem; }
