@@ -214,6 +214,10 @@ export function breadcrumbsFor(role: Role, pathname: string): Crumb[] {
   crumbs.push({ label: navItem?.label ?? SEGMENT_LABELS[first] ?? first, path: `/${first}` });
   const second = segments[1];
   if (!second) return crumbs;
+  if (second === 'new') {
+    crumbs.push({ label: 'New', path: pathname });
+    return crumbs;
+  }
   if (second === 'record') {
     const id = segments[2];
     if (id) crumbs.push({ label: id.length > 12 ? `${id.slice(0, 8)}…` : id, path: pathname });

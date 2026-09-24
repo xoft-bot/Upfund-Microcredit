@@ -9,6 +9,8 @@ const QueuePage = lazy(() => import('./pages/QueuePage.js'));
 const ApplicationRecord = lazy(() => import('./pages/ApplicationRecord.js'));
 const LoanRecord = lazy(() => import('./pages/LoanRecord.js'));
 const ClientRecord = lazy(() => import('./pages/ClientRecord.js'));
+const NewApplication = lazy(() => import('./pages/NewApplication.js'));
+const NewClient = lazy(() => import('./pages/NewClient.js'));
 const PortalDashboard = lazy(async () => { const module = await import('./components/portals/PortalDashboard.js'); return { default: module.PortalDashboard }; });
 
 interface Props {
@@ -40,11 +42,13 @@ export function AppRoutes({ shell, collectorHome, reconciliation }: Props) {
           <Route element={<Guard role={role} />}>
             <Route index element={role === 'collector' ? collectorHome : <ActionCenter />} />
 
+            <Route path="applications/new" element={<NewApplication />} />
             <Route path="applications/record/:id" element={<ApplicationRecord />} />
             <Route path="applications/:queue?" element={<QueuePage module="applications" />} />
             <Route path="loans/record/:id" element={<LoanRecord />} />
             <Route path="loans/:queue?" element={<QueuePage module="loans" />} />
             <Route path="clients" element={<QueuePage module="clients" />} />
+            <Route path="clients/new" element={<NewClient />} />
             <Route path="clients/:id" element={<ClientRecord />} />
 
             <Route path="collections" element={role === 'collector' ? collectorHome : <Placeholder title="Collections" phase={4} />} />
@@ -53,7 +57,7 @@ export function AppRoutes({ shell, collectorHome, reconciliation }: Props) {
             {/* Existing dashboards stay mounted until Phases 3-5 reach parity. */}
             <Route path="reports" element={classic} />
             <Route path="workspace" element={classic} />
-            <Route path="apply" element={classic} />
+            <Route path="apply" element={<NewApplication />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

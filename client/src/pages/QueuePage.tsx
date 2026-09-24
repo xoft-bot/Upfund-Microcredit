@@ -3,6 +3,7 @@ import { Link, Navigate, useOutletContext, useParams, useSearchParams } from 're
 import type { ShellOutletContext } from '../components/shell/AppShell.js';
 import { COLUMNS, QueueList } from '../components/lists/QueueList.js';
 import { QUEUES, countFor, queueLabel } from '../config/navConfig.js';
+import { canCreateApplication, canCreateClient } from '../lib/lifecycle.js';
 import { buildListParams, PAGE_SIZE, type ListModule } from '../lib/listQuery.js';
 import { ApiRequestError, listClients, listLoanApplications, listLoans, type ListRow, type Paged } from '../services/api.js';
 
@@ -86,6 +87,8 @@ export default function QueuePage({ module }: { module: ListModule }) {
     <section className="queue-page">
       <div className="page-head">
         <h1>{heading}{queueName ? `: ${queueName}` : ''}</h1>
+        {module === 'applications' && canCreateApplication(role) && <Link className="primary-button page-action" to="/applications/new">New application</Link>}
+        {module === 'clients' && canCreateClient(role) && <Link className="primary-button page-action" to="/clients/new">Add client</Link>}
       </div>
 
       {module !== 'clients' && (

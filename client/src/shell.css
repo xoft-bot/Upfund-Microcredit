@@ -160,3 +160,7 @@
 .act-form textarea { min-height: 84px; resize: vertical; }
 .act-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .act-notice { margin: 0; padding: 8px 10px; border-radius: 6px; background: #dcefe3; color: #17593f; font-size: .88rem; }
+
+/* --- Phase 3d: creation forms --------------------------------------------------- */
+.page-action { margin-left: auto; text-decoration: none; padding: 8px 14px; border-radius: 6px; }
+.secondary-button { display: inline-block; text-decoration: none; }
