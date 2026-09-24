@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildListParams, pageCount, parsePage, PAGE_SIZE } from '../client/src/lib/listQuery.js';
-import { formatDate, formatUgx, humanize, statusTone } from '../client/src/lib/format.js';
+import { formatAmount, formatDate, formatUgx, humanize, statusTone } from '../client/src/lib/format.js';
 
 const sp = (query: string) => new URLSearchParams(query);
 
@@ -44,6 +44,9 @@ describe('format helpers', () => {
   it('formats dates safely', () => {
     expect(formatDate('2026-09-24T10:00:00Z')).toMatch(/2026/);
     expect(formatDate('nope')).toBe('–'); expect(formatDate(undefined)).toBe('–');
+  });
+  it('formats plain amounts from numbers or numeric strings', () => {
+    expect(formatAmount('12000.00')).toBe('12,000'); expect(formatAmount(undefined)).toBe('–');
   });
   it('humanizes statuses and picks tones', () => {
     expect(humanize('pending_reconciliation')).toBe('Pending reconciliation');

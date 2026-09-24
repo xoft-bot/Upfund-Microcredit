@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_CARDS, NAV_BY_ROLE, QUEUES, breadcrumbsFor, canAccess, countFor, countsEnabled,
-  hasBottomBar, hasSearch, isRole, navFor, type Role,
+  canViewAudit, hasBottomBar, hasSearch, isRole, navFor, type Role,
 } from '../client/src/config/navConfig.js';
 
 const ROLES = Object.keys(NAV_BY_ROLE) as Role[];
@@ -120,5 +120,11 @@ describe('breadcrumbsFor', () => {
     expect(breadcrumbsFor('admin', '/loans/due_today').map((c) => c.label)).toEqual(['Overview', 'Loans', 'Due today']);
     expect(breadcrumbsFor('admin', '/applications/record/0123456789abcdef').map((c) => c.label)).toEqual(['Overview', 'Applications', '01234567…']);
     expect(breadcrumbsFor('collector', '/loans').map((c) => c.label)).toEqual(['Today', 'My loans']);
+  });
+});
+
+describe('canViewAudit', () => {
+  it('is limited to admin, manager and officer', () => {
+    expect(ROLES.filter(canViewAudit).sort()).toEqual(['admin', 'manager', 'officer']);
   });
 });
