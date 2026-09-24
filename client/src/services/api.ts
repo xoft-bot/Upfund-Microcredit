@@ -169,3 +169,55 @@ export function decideApplication(id: string, command: { decision: 'approve' | '
 export function disburseLoan(id: string, command: { disbursementReference: string; idempotencyKey: string }, token: string): Promise<{ loanId: string; status: string; disbursementReference: string; amount: number; created: boolean }> {
   return request<{ loanId: string; status: string; disbursementReference: string; amount: number; created: boolean }>(`/api/v1/loans/${id}/disburse`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(command) });
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1 read API (GET only). Appended to client/src/services/api.ts so it
+// reuses the module-private request() and ApiRequestError.
+// Row shapes are intentionally loose until the Phase 3 list screens pin them.
+// ---------------------------------------------------------------------------
+export type ListRow = Record<string, unknown>;
+/** Shape: { applications: { draft: n, ... }, loans: { ..., due_today: n }, payments: { ... } } */
+export type QueueCounts = Record<string, Record<string, number>>;
+export interface Paged<T = ListRow> { items: T[]; total: number; page: number; pageSize: number }
+export interface ListParams { page?: number; pageSize?: number; q?: string; queue?: string; status?: string; product?: string; from?: string; to?: string; branchId?: string }
+export interface SearchResults { clients?: ListRow[]; loans?: ListRow[]; applications?: ListRow[]; receipts?: ListRow[] }
+
+function readQuery(params: object): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
+  }
+  return search.size ? `?${search.toString()}` : '';
+}
+function bearer(token: string): RequestInit { return { headers: { authorization: `Bearer ${token}` } }; }
+
+export function getQueueCounts(token: string, options: { branchId?: string } = {}): Promise<QueueCounts> {
+  return request<QueueCounts>(`/api/v1/queues/counts${readQuery(options)}`, bearer(token));
+}
+export function listLoanApplications(token: string, params: ListParams = {}): Promise<Paged> {
+  return request<Paged>(`/api/v1/loan-applications${readQuery(params)}`, bearer(token));
+}
+export function listLoans(token: string, params: ListParams = {}): Promise<Paged> {
+  return request<Paged>(`/api/v1/loans${readQuery(params)}`, bearer(token));
+}
+export function listClients(token: string, params: ListParams = {}): Promise<Paged> {
+  return request<Paged>(`/api/v1/clients${readQuery(params)}`, bearer(token));
+}
+export function listPayments(token: string, params: ListParams = {}): Promise<Paged> {
+  return request<Paged>(`/api/v1/payments${readQuery(params)}`, bearer(token));
+}
+export function getLoanApplicationRecord(id: string, token: string): Promise<ListRow> {
+  return request<ListRow>(`/api/v1/loan-applications/${encodeURIComponent(id)}`, bearer(token));
+}
+export function getLoanRecord(id: string, token: string): Promise<ListRow> {
+  return request<ListRow>(`/api/v1/loans/${encodeURIComponent(id)}`, bearer(token));
+}
+export function getClientRecord(id: string, token: string): Promise<ListRow> {
+  return request<ListRow>(`/api/v1/clients/${encodeURIComponent(id)}`, bearer(token));
+}
+export function searchAll(token: string, q: string): Promise<SearchResults> {
+  return request<SearchResults>(`/api/v1/search${readQuery({ q })}`, bearer(token));
+}
+export function getAuditTrail(token: string, params: { entityType: string; entityId: string; page?: number; pageSize?: number }): Promise<Paged> {
+  return request<Paged>(`/api/v1/audit${readQuery(params)}`, bearer(token));
+}
