@@ -1,16 +1,19 @@
+import { useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 import type { ShellOutletContext } from '../components/shell/AppShell.js';
+import { ApplicationActions } from '../components/records/ApplicationActions.js';
 import { AuditPanel } from '../components/records/AuditPanel.js';
 import { Card, Facts, LoadState, RecordFrame, useRecord } from '../components/records/RecordFrame.js';
 import { canAccess, canViewAudit } from '../config/navConfig.js';
-import { formatDate, formatDateTime, formatUgx, humanize, str } from '../lib/format.js';
+import { formatDateTime, formatUgx, humanize, str } from '../lib/format.js';
 import { getApplicationTimeline, getLoanApplicationRecord, type ApplicationTimelineEntry, type ListRow } from '../services/api.js';
 
 export default function ApplicationRecord() {
   const { id = '' } = useParams();
-  const { role, getToken } = useOutletContext<ShellOutletContext>();
-  const record = useRecord<ListRow>(getToken, (token) => getLoanApplicationRecord(id, token), `app:${id}`);
-  const timeline = useRecord<ApplicationTimelineEntry[]>(getToken, (token) => getApplicationTimeline(id, token), `timeline:${id}`);
+  const { role, getToken, permissions } = useOutletContext<ShellOutletContext>();
+  const [version, setVersion] = useState(0);
+  const record = useRecord<ListRow>(getToken, (token) => getLoanApplicationRecord(id, token), `app:${id}`, version);
+  const timeline = useRecord<ApplicationTimelineEntry[]>(getToken, (token) => getApplicationTimeline(id, token), `timeline:${id}`, version);
   const row = record.data;
 
   if (!row) return <RecordFrame title="Application" backTo="/applications" backLabel="Applications"><LoadState loading={record.loading} error={record.error} /></RecordFrame>;
@@ -51,14 +54,9 @@ export default function ApplicationRecord() {
             </ul>
           )}
         </Card>
-        {canViewAudit(role) && <AuditPanel entityId={id} getToken={getToken} />}
+        {canViewAudit(role) && <AuditPanel entityId={id} getToken={getToken} version={version} />}
         <Card title="Actions" wide>
-          <p className="note">
-            Submit, KYC, risk, approve and disburse are still in the classic view until Phase 3c moves them here.
-            {canAccess(role, '/workspace') && <> <Link to="/workspace">Open classic view</Link>.</>}
-            {role === 'client' && <> <Link to="/apply">Open Apply</Link>.</>}
-          </p>
-          <small className="note">Created {formatDate(row.createdAt)}</small>
+          <ApplicationActions id={id} status={str(row.status)} permissions={permissions} getToken={getToken} onDone={() => setVersion((current) => current + 1)} />
         </Card>
       </div>
     </RecordFrame>

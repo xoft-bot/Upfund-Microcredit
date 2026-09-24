@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 import type { ShellOutletContext } from '../components/shell/AppShell.js';
 import { StatusPill } from '../components/lists/QueueList.js';
 import { AuditPanel } from '../components/records/AuditPanel.js';
+import { LoanActions } from '../components/records/LoanActions.js';
 import { Card, Facts, LoadState, RecordFrame, useRecord } from '../components/records/RecordFrame.js';
 import { canAccess, canViewAudit } from '../config/navConfig.js';
 import { formatAmount, formatDate, formatDateTime, formatUgx, str } from '../lib/format.js';
@@ -13,7 +15,8 @@ const Pair = ({ paid, due }: { paid: unknown; due: unknown }) => <>{formatAmount
 export default function LoanRecord() {
   const { id = '' } = useParams();
   const { role, getToken } = useOutletContext<ShellOutletContext>();
-  const record = useRecord<ListRow>(getToken, (token) => getLoanRecord(id, token), `loan:${id}`);
+  const [version, setVersion] = useState(0);
+  const record = useRecord<ListRow>(getToken, (token) => getLoanRecord(id, token), `loan:${id}`, version);
   const row = record.data;
 
   if (!row) return <RecordFrame title="Loan" backTo="/loans" backLabel="Loans"><LoadState loading={record.loading} error={record.error} /></RecordFrame>;
@@ -37,6 +40,8 @@ export default function LoanRecord() {
             ['Application', applicationLink],
           ]} />
         </Card>
+
+        <LoanActions id={id} role={role} status={str(row.status)} getToken={getToken} onDone={() => setVersion((current) => current + 1)} />
 
         <Card title={`Repayment schedule (${schedule.length})`} wide>
           {schedule.length === 0 ? <p className="note">No schedule yet. It is generated at disbursement.</p> : (
@@ -77,7 +82,7 @@ export default function LoanRecord() {
           )}
         </Card>
 
-        {canViewAudit(role) && <AuditPanel entityId={id} getToken={getToken} />}
+        {canViewAudit(role) && <AuditPanel entityId={id} getToken={getToken} version={version} />}
       </div>
     </RecordFrame>
   );

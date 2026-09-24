@@ -3,8 +3,8 @@ import { formatDateTime, humanize, str } from '../../lib/format.js';
 import { Card, useRecord } from './RecordFrame.js';
 
 /** Read-only trail for one record. Metadata is deliberately not shown (may contain personal data). */
-export function AuditPanel({ entityId, getToken }: { entityId: string; getToken: () => Promise<string> }) {
-  const { data, error, loading } = useRecord<Paged>(getToken, (token) => getAuditTrail(token, { entityId, pageSize: 20 }), `audit:${entityId}`);
+export function AuditPanel({ entityId, getToken, version = 0 }: { entityId: string; getToken: () => Promise<string>; version?: number }) {
+  const { data, error, loading } = useRecord<Paged>(getToken, (token) => getAuditTrail(token, { entityId, pageSize: 20 }), `audit:${entityId}`, version);
   return (
     <Card title="Audit trail" wide>
       {loading && <p className="note">Loading…</p>}
