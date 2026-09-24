@@ -21,7 +21,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:start": "bash scripts/start-db.sh",
-  "db:migrate": "tsx server/src/db/migrate.ts",
+    "db:migrate": "tsx server/src/db/migrate.ts",
     "db:check": "tsx server/src/db/check-schema.ts",
     "db:seed": "tsx server/src/db/seed.ts",
     "db:seed:defaults": "tsx server/src/db/seed-defaults.ts"
@@ -36,6 +36,7 @@
     "firebase-admin": "^13.10.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-router-dom": "^7.18.4",
     "typescript": "^5.7.2"
   },
   "overrides": {

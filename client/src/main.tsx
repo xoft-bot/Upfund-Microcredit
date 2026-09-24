@@ -1,6 +1,8 @@
 import { StrictMode, Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import './styles.css';
+import './shell.css';
 import { ErrorBoundary } from './components/common/ErrorBoundary.js';
 import { CollectorRouteView } from './components/field/CollectorRouteView.js';
 import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
@@ -9,9 +11,9 @@ import { ApiRequestError, getAssignedLoans, getCollectionQueue, getHealth, getRe
 import { getFirebaseIdToken, signOutFirebase, subscribeToFirebaseAuth, type AuthIdentity, type AuthSession } from './services/firebase.js';
 import { telemetry } from './services/telemetry.js';
 import type { FieldCollectionRecord, QueueMetrics, QueueSnapshot } from './types/field-ops.js';
-import { PortalDashboard } from './components/portals/PortalDashboard.js';
 import { CollectorReportingDashboard } from './components/portals/CollectorReportingDashboard.js';
 import { SignInCard } from './components/auth/SignInCard.js';
+import { AppRoutes } from './routes.js';
 
 const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
 const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
@@ -19,6 +21,13 @@ const LazyManagerVarianceDashboard = lazy(async () => { const module = await imp
 const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
 const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0, stale: 0 };
 const COLLECTION_QUEUE_ROLES = ['admin', 'manager', 'officer', 'collector'];
+
+// Module-level so its identity is stable for effects in the shell (search, counts).
+async function getToken(): Promise<string> {
+  const token = await getFirebaseIdToken();
+  if (!token) throw new Error('AUTH_TOKEN_UNAVAILABLE');
+  return token;
+}
 
 function getDeviceId(): string {
   const key = 'letsgrow-field-ops-device-id';
@@ -186,73 +195,79 @@ function App() {
   const metrics = queueSnapshot.metrics ?? emptyMetrics;
   const collectorContextReady = Boolean(identity && ['collector', 'officer'].includes(identity.role) && identity.branchId);
   const managerContext = identity && ['admin', 'manager'].includes(identity.role) ? identity : null;
-  const portalContext = identity && ['admin', 'manager', 'officer', 'client', 'marketing', 'accountant'].includes(identity.role);
   const routeName = identity?.branchName ? `${identity.branchName} route` : 'Assigned collection route';
-
   const displayedRecords = [...serverRecords, ...records.filter((local) => !serverRecords.some((server) => server.localId === local.localId))];
-  return (
-    <main className="shell">
-      <header className="app-header">
-        <div className="header-topline">
-          <div>
-            <p className="eyebrow">UPFUND MICROCREDIT · FIELD OPERATIONS</p>
-            <h1>Upfund Microcredit</h1>
-            <p className="lede">Offline-ready collections with server-authoritative posting.</p>
-          </div>
-          {session && <button className="text-button sign-out-button" type="button" onClick={() => void signOutFirebase()}>Sign out</button>}
-        </div>
-        <div className={`status ${backendLive ? '' : 'offline'}`} role="status"><span className="dot" />Backend: {backendLive ? 'Live' : 'Unavailable'}</div>
-        {authLoading ? <p className="empty-state" role="status">Loading authenticated workspace…</p>
-          : !session ? <SignInCard />
-            : identityLoading ? <p className="empty-state" role="status">Loading your authorized workspace…</p>
-              : identity ? <>
-                <p className="auth-context" role="status">Signed in as {session.email ?? session.uid} · {identity.role} · Branch: {identity.branchId ?? 'Unassigned'}</p>
-                {identityError && <p className="form-error" role="status">{identityError}</p>}
-              </>
-                : <p className="form-error" role="alert">{identityError || 'This account is not authorized for field operations.'}</p>}
-      </header>
 
-      {identity && (portalContext
-        ? <PortalDashboard identity={identity} />
-        : collectorContextReady
-          ? <div className="workflow-grid">
-            <CollectorReportingDashboard identity={identity} />
-            <CollectorRouteView queue={queue} routeName={routeName} records={displayedRecords} metrics={metrics} queueReady={queueReady} queueError={queueError} onCollect={() => document.getElementById('collection-form')?.scrollIntoView({ behavior: 'smooth' })} />
-            <div id="collection-form">
-              <FieldCollectionForm queue={queue} collectorId={identity.collectorId} branchId={identity.branchId!} deviceId={getDeviceId()} assignedLoans={assignedLoans} onQueued={addRecord} disabled={!queueReady || Boolean(queueError)} />
+  // Before sign-in (and while identity loads) keep the original header, without the shell.
+  if (!identity) {
+    return (
+      <main className="shell">
+        <header className="app-header">
+          <div className="header-topline">
+            <div>
+              <p className="eyebrow">UPFUND MICROCREDIT · FIELD OPERATIONS</p>
+              <h1>Upfund Microcredit</h1>
+              <p className="lede">Offline-ready collections with server-authoritative posting.</p>
             </div>
-            {lastRecord && <Suspense fallback={<p className="empty-state">Loading receipt…</p>}><LazyReceiptPreview clientId={lastRecord.clientId} loanId={lastRecord.loanId} amount={lastRecord.amount} collectorId={lastRecord.collectorId} capturedAt={lastRecord.capturedAt} status={lastRecord.status} receiptReference={lastRecord.receiptReference} principalAmount={lastRecord.amount} /></Suspense>}
+            {session && <button className="text-button sign-out-button" type="button" onClick={() => void signOutFirebase()}>Sign out</button>}
           </div>
-          : <p className="empty-state workflow-empty">{['collector', 'officer'].includes(identity.role) ? 'This account has no branch assignment, so collections are unavailable.' : 'No field collection workflow is assigned to this account.'}</p>)}
+          <div className={`status ${backendLive ? '' : 'offline'}`} role="status"><span className="dot" />Backend: {backendLive ? 'Live' : 'Unavailable'}</div>
+          {authLoading ? <p className="empty-state" role="status">Loading authenticated workspace…</p>
+            : !session ? <SignInCard />
+              : identityLoading ? <p className="empty-state" role="status">Loading your authorized workspace…</p>
+                : <p className="form-error" role="alert">{identityError || 'This account is not authorized for field operations.'}</p>}
+        </header>
+        <footer className="footer">System version v{appVersion} ({gitSha}) · Backend: {backendLive ? 'Live' : 'Unavailable'}</footer>
+      </main>
+    );
+  }
 
-      {managerContext && <Suspense fallback={<p className="empty-state">Loading manager review…</p>}>
-        <LazyManagerVarianceDashboard batches={reconciliationBatches.map((batch) => ({
-          batchReference: batch.batchReference,
-          branchId: batch.branchId,
-          collectionDate: batch.collectionDate,
-          expectedAmount: batch.expectedAmount,
-          recordedAmount: batch.recordedAmount,
-          submittedAmount: batch.submittedAmount,
-          variance: batch.variance,
-          status: batch.status,
-          decisionReason: batch.decisionReason,
-          reviewedAt: batch.reviewedAt,
-          submittedBy: batch.submittedByName ?? batch.submittedBy,
-          payments: batch.payments.map((payment) => ({
-            paymentId: payment.paymentId,
-            clientId: payment.clientId ?? 'Unknown client',
-            amount: payment.amount,
-            receiptReference: payment.receiptReference ?? undefined,
-            status: payment.status,
-          })),
-        }))} branchId={managerContext.branchId} getToken={async () => {
-          const token = await getFirebaseIdToken();
-          if (!token) throw new Error('AUTH_TOKEN_UNAVAILABLE');
-          return token;
-        }} onResolved={(batchReference) => setReconciliationBatches((current) => current.filter((batch) => batch.batchReference !== batchReference))} />
-      </Suspense>}
-      <footer className="footer">System version v{appVersion} ({gitSha}) · Backend: {backendLive ? 'Live' : 'Unavailable'}</footer>
-    </main>
+  // Existing collector workflow, unchanged, mounted as the content of Today / Capture.
+  const collectorHome = collectorContextReady
+    ? <div className="workflow-grid">
+      <CollectorReportingDashboard identity={identity} />
+      <CollectorRouteView queue={queue} routeName={routeName} records={displayedRecords} metrics={metrics} queueReady={queueReady} queueError={queueError} onCollect={() => document.getElementById('collection-form')?.scrollIntoView({ behavior: 'smooth' })} />
+      <div id="collection-form">
+        <FieldCollectionForm queue={queue} collectorId={identity.collectorId} branchId={identity.branchId!} deviceId={getDeviceId()} assignedLoans={assignedLoans} onQueued={addRecord} disabled={!queueReady || Boolean(queueError)} />
+      </div>
+      {lastRecord && <Suspense fallback={<p className="empty-state">Loading receipt…</p>}><LazyReceiptPreview clientId={lastRecord.clientId} loanId={lastRecord.loanId} amount={lastRecord.amount} collectorId={lastRecord.collectorId} capturedAt={lastRecord.capturedAt} status={lastRecord.status} receiptReference={lastRecord.receiptReference} principalAmount={lastRecord.amount} /></Suspense>}
+    </div>
+    : <p className="empty-state workflow-empty">{['collector', 'officer'].includes(identity.role) ? 'This account has no branch assignment, so collections are unavailable.' : 'No field collection workflow is assigned to this account.'}</p>;
+
+  // Existing manager variance dashboard, unchanged, mounted as the content of Reconciliation.
+  const reconciliation = managerContext
+    ? <Suspense fallback={<p className="empty-state">Loading manager review…</p>}>
+      <LazyManagerVarianceDashboard batches={reconciliationBatches.map((batch) => ({
+        batchReference: batch.batchReference,
+        branchId: batch.branchId,
+        collectionDate: batch.collectionDate,
+        expectedAmount: batch.expectedAmount,
+        recordedAmount: batch.recordedAmount,
+        submittedAmount: batch.submittedAmount,
+        variance: batch.variance,
+        status: batch.status,
+        decisionReason: batch.decisionReason,
+        reviewedAt: batch.reviewedAt,
+        submittedBy: batch.submittedByName ?? batch.submittedBy,
+        payments: batch.payments.map((payment) => ({
+          paymentId: payment.paymentId,
+          clientId: payment.clientId ?? 'Unknown client',
+          amount: payment.amount,
+          receiptReference: payment.receiptReference ?? undefined,
+          status: payment.status,
+        })),
+      }))} branchId={managerContext.branchId} getToken={getToken} onResolved={(batchReference) => setReconciliationBatches((current) => current.filter((batch) => batch.batchReference !== batchReference))} />
+    </Suspense>
+    : null;
+
+  return (
+    <BrowserRouter>
+      <AppRoutes
+        shell={{ identity, email: session?.email ?? undefined, backendLive, identityError, onSignOut: () => void signOutFirebase(), getToken, versionLabel: `System version v${appVersion} (${gitSha})` }}
+        collectorHome={collectorHome}
+        reconciliation={reconciliation}
+      />
+    </BrowserRouter>
   );
 }
 
