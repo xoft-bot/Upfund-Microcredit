@@ -90,3 +90,42 @@
   .bottombar-link.is-active { color: var(--sh-brand) !important; font-weight: 700; box-shadow: inset 0 3px 0 var(--sh-brand); }
 }
 @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
+
+/* --- Phase 3a: queues and lists ------------------------------------------------ */
+.ql-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 10px; }
+.ql-tab { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--sh-line); border-radius: 999px; background: var(--sh-surface); color: var(--sh-ink) !important; text-decoration: none; font-size: .86rem; white-space: nowrap; }
+.ql-tab.is-active { background: var(--sh-brand); border-color: var(--sh-brand); color: #fff !important; font-weight: 600; }
+.ql-tab-count { min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--sh-work); color: #fff; font-size: .72rem; font-weight: 700; text-align: center; }
+.ql-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 12px; }
+.ql-search { flex: 1 1 240px; max-width: 420px; height: 36px; padding: 0 10px; border: 1px solid var(--sh-line); border-radius: 6px; font: inherit; background: #fff; color: var(--sh-ink); }
+.ql-date { display: grid; gap: 2px; font-size: .75rem; color: var(--sh-muted); }
+.ql-date input { height: 36px; padding: 0 8px; border: 1px solid var(--sh-line); border-radius: 6px; font: inherit; background: #fff; color: var(--sh-ink); }
+.ql.is-loading .ql-scroll { opacity: .55; }
+.ql-scroll { overflow-x: auto; background: var(--sh-surface); border: 1px solid var(--sh-line); border-radius: 10px; }
+.ql-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.ql-table th { text-align: left; font-weight: 600; font-size: .78rem; color: var(--sh-muted); padding: 10px 12px; border-bottom: 1px solid var(--sh-line); white-space: nowrap; }
+.ql-table td { padding: 10px 12px; border-bottom: 1px solid #edf0ec; vertical-align: top; }
+.ql-table tbody tr:last-child td { border-bottom: 0; }
+.ql-table tbody tr:hover { background: #f5f8f5; }
+.ql-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ql-person { display: grid; gap: 1px; }
+.ql-person small { color: var(--sh-muted); }
+.ql-open a { font-weight: 600; text-decoration: none; }
+.ql-pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 10px; font-size: .85rem; color: var(--sh-muted); }
+.ql-pager-btns { display: inline-flex; align-items: center; gap: 12px; }
+.ql-pager .text-button:disabled { opacity: .4; cursor: default; }
+.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .76rem; font-weight: 600; background: #e9ecea; color: #37453e; }
+.pill-ok { background: #dcefe3; color: #17593f; }
+.pill-warn { background: #fbecc8; color: #7a4a00; }
+.pill-bad { background: #f6d9d5; color: #8f231b; }
+
+@media (max-width: 640px) {
+  .ql-table thead { position: absolute; left: -9999px; }
+  .ql-table, .ql-table tbody, .ql-table tr, .ql-table td { display: block; width: 100%; }
+  .ql-table tr { padding: 8px 4px; border-bottom: 1px solid var(--sh-line); }
+  .ql-table td { display: flex; justify-content: space-between; gap: 12px; border: 0; padding: 4px 10px; text-align: right; }
+  .ql-table td::before { content: attr(data-label); color: var(--sh-muted); font-size: .78rem; text-align: left; }
+  .ql-table td.ql-open { justify-content: flex-end; }
+  .ql-table td.ql-open::before { content: none; }
+  .ql-person { text-align: right; }
+}

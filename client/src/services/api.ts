@@ -218,6 +218,6 @@ export function getClientRecord(id: string, token: string): Promise<ListRow> {
 export function searchAll(token: string, q: string): Promise<SearchResults> {
   return request<SearchResults>(`/api/v1/search${readQuery({ q })}`, bearer(token));
 }
-export function getAuditTrail(token: string, params: { entityType: string; entityId: string }): Promise<ListRow[]> {
-  return request<ListRow[]>(`/api/v1/audit${readQuery(params)}`, bearer(token));
+export function getAuditTrail(token: string, params: { entityType: string; entityId: string; page?: number; pageSize?: number }): Promise<Paged> {
+  return request<Paged>(`/api/v1/audit${readQuery(params)}`, bearer(token));
 }

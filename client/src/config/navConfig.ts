@@ -161,12 +161,33 @@ export function canAccess(role: Role, pathname: string): boolean {
   return navFor(role).some((item) => item.path !== '/' && (pathname === item.path || pathname.startsWith(`${item.path}/`)));
 }
 
-export type QueueCountsLike = Record<string, Record<string, unknown>> | null | undefined;
+/** Accepts any object so a differently-declared QueueCounts type still fits. Reads are guarded at runtime. */
+export type QueueCountsLike = object | null | undefined;
 
-/** Reads one count from the /queues/counts payload. Returns undefined when the server sent nothing for it. */
+/**
+ * The server groups counts by raw status and omits statuses with no rows, so:
+ *  - a missing status inside a loaded module means 0, and
+ *  - the UI queues "in_review" and "active" are sums of several raw statuses,
+ *    mirroring applicationQueueSql() and the loans "active" predicate in readApis.ts.
+ * Returns undefined only when counts have not loaded (or the module is absent).
+ */
+const DERIVED_QUEUES: Record<string, readonly string[]> = {
+  'applications:in_review': ['submitted', 'kyc_verified', 'risk_assessed'],
+  'loans:active': ['active', 'disbursed'],
+};
+
 export function countFor(counts: QueueCountsLike, ref: CountRef): number | undefined {
-  const value = counts?.[ref.module]?.[ref.queue];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  const group = (counts as Record<string, unknown> | null | undefined)?.[ref.module] as Record<string, unknown> | null | undefined;
+  if (!group || typeof group !== 'object') return undefined;
+  const keys = DERIVED_QUEUES[`${ref.module}:${ref.queue}`] ?? [ref.queue];
+  let total = 0;
+  for (const key of keys) {
+    const value = group[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+    total += value;
+  }
+  return total;
 }
 
 export function queueLabel(module: CountModule, queue: string): string | undefined {

@@ -91,12 +91,26 @@ describe('badges and cards use real queue names', () => {
 });
 
 describe('countFor', () => {
-  it('reads numeric counts and ignores anything else', () => {
-    const counts = { loans: { due_today: 4, overdue: '7' } } as never;
+  const counts = {
+    applications: { draft: 2, submitted: 3, kyc_verified: 1, risk_assessed: 4, approved: 5 },
+    loans: { active: 6, disbursed: 2, overdue: 7, due_today: 4 },
+    payments: {},
+  } as never;
+  it('reads plain status counts', () => {
     expect(countFor(counts, { module: 'loans', queue: 'due_today' })).toBe(4);
-    expect(countFor(counts, { module: 'loans', queue: 'overdue' })).toBeUndefined();
-    expect(countFor(counts, { module: 'payments', queue: 'posted' })).toBeUndefined();
+    expect(countFor(counts, { module: 'loans', queue: 'overdue' })).toBe(7);
+  });
+  it('sums derived queues like the server predicates', () => {
+    expect(countFor(counts, { module: 'applications', queue: 'in_review' })).toBe(8);
+    expect(countFor(counts, { module: 'loans', queue: 'active' })).toBe(8);
+  });
+  it('treats a missing status in a loaded module as zero', () => {
+    expect(countFor(counts, { module: 'payments', queue: 'posted' })).toBe(0);
+    expect(countFor(counts, { module: 'loans', queue: 'defaulted' })).toBe(0);
+  });
+  it('is undefined until counts load or when data is malformed', () => {
     expect(countFor(null, { module: 'loans', queue: 'due_today' })).toBeUndefined();
+    expect(countFor({ loans: { overdue: '7' } } as never, { module: 'loans', queue: 'overdue' })).toBeUndefined();
   });
 });
 

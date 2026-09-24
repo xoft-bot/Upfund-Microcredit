@@ -5,6 +5,7 @@ import { canAccess, isRole, type Role } from './config/navConfig.js';
 
 const ActionCenter = lazy(() => import('./pages/ActionCenter.js'));
 const Placeholder = lazy(() => import('./pages/Placeholder.js'));
+const QueuePage = lazy(() => import('./pages/QueuePage.js'));
 const PortalDashboard = lazy(async () => { const module = await import('./components/portals/PortalDashboard.js'); return { default: module.PortalDashboard }; });
 
 interface Props {
@@ -37,10 +38,11 @@ export function AppRoutes({ shell, collectorHome, reconciliation }: Props) {
             <Route index element={role === 'collector' ? collectorHome : <ActionCenter />} />
 
             <Route path="applications/record/:id" element={<Placeholder title="Application" />} />
-            <Route path="applications/:queue?" element={<Placeholder title="Applications" module="applications" />} />
+            <Route path="applications/:queue?" element={<QueuePage module="applications" />} />
             <Route path="loans/record/:id" element={<Placeholder title="Loan" />} />
-            <Route path="loans/:queue?" element={<Placeholder title="Loans" module="loans" />} />
-            <Route path="clients/:id?" element={<Placeholder title="Clients" />} />
+            <Route path="loans/:queue?" element={<QueuePage module="loans" />} />
+            <Route path="clients" element={<QueuePage module="clients" />} />
+            <Route path="clients/:id" element={<Placeholder title="Client" />} />
 
             <Route path="collections" element={role === 'collector' ? collectorHome : <Placeholder title="Collections" phase={4} />} />
             <Route path="reconciliation" element={manager ? reconciliation : <Placeholder title="Reconciliation" phase={4} />} />
