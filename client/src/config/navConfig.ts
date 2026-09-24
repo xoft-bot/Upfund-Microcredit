@@ -38,8 +38,6 @@ export const QUEUES: Record<CountModule, ReadonlyArray<{ id: string; label: stri
 const nav = (id: string, label: string, path: string, badge?: CountRef): NavItem => ({ id, label, path, badge });
 const b = (module: CountModule, queue: string): CountRef => ({ module, queue });
 
-// The old single-page view stays reachable until Phases 3-5 reach parity.
-const classic = nav('classic', 'Classic view', '/workspace');
 
 // "Accounting (read)" and "Admin" are intentionally absent: no backend until Phase 6.
 // Collector "Sync" and "History" live inside the existing collector workflow until Phase 4.
@@ -52,7 +50,6 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     nav('collections', 'Collections', '/collections'),
     nav('reconciliation', 'Reconciliation', '/reconciliation', b('payments', 'pending_reconciliation')),
     nav('reports', 'Reports', '/reports'),
-    classic,
   ],
   manager: [
     nav('home', 'Overview', '/'),
@@ -62,7 +59,6 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     nav('collections', 'Collections', '/collections'),
     nav('reconciliation', 'Reconciliation', '/reconciliation', b('payments', 'pending_reconciliation')),
     nav('reports', 'Reports', '/reports'),
-    classic,
   ],
   officer: [
     nav('home', 'My work', '/'),
@@ -70,7 +66,6 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     nav('applications', 'Applications', '/applications', b('applications', 'in_review')),
     nav('loans', 'Loans', '/loans', b('loans', 'overdue')),
     nav('collections', 'Collections', '/collections'),
-    classic,
   ],
   collector: [
     nav('home', 'Today', '/'),
@@ -81,12 +76,10 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     nav('home', 'Control room', '/'),
     nav('reconciliation', 'Reconciliation', '/reconciliation', b('payments', 'pending_reconciliation')),
     nav('reports', 'Ledger and reports', '/reports'),
-    classic,
   ],
   marketing: [
     nav('home', 'Product reach', '/'),
     nav('reports', 'Reports', '/reports'),
-    classic,
   ],
   client: [
     nav('my-loans', 'My loans', '/loans'),
@@ -199,7 +192,7 @@ export function queueLabel(module: CountModule, queue: string): string | undefin
 const SEGMENT_LABELS: Record<string, string> = {
   applications: 'Applications', loans: 'Loans',
   clients: 'Clients', collections: 'Collections', reconciliation: 'Reconciliation',
-  reports: 'Reports', workspace: 'Classic view', apply: 'Apply',
+  reports: 'Reports', apply: 'Apply',
 };
 
 export interface Crumb { label: string; path: string }
