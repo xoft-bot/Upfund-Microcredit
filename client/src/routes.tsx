@@ -11,58 +11,54 @@ const LoanRecord = lazy(() => import('./pages/LoanRecord.js'));
 const ClientRecord = lazy(() => import('./pages/ClientRecord.js'));
 const NewApplication = lazy(() => import('./pages/NewApplication.js'));
 const NewClient = lazy(() => import('./pages/NewClient.js'));
-const PortalDashboard = lazy(async () => { const module = await import('./components/portals/PortalDashboard.js'); return { default: module.PortalDashboard }; });
+const ManagerAnalyticsDashboard = lazy(async () => { const module = await import('./components/portals/ManagerAnalyticsDashboard.js'); return { default: module.ManagerAnalyticsDashboard }; });
+const AccountantAuditDashboard = lazy(async () => { const module = await import('./components/portals/AccountantAuditDashboard.js'); return { default: module.AccountantAuditDashboard }; });
+const MarketingProductReach = lazy(async () => { const module = await import('./components/portals/MarketingProductReach.js'); return { default: module.MarketingProductReach }; });
 
 interface Props {
   shell: ShellProps;
-  /** Existing collector workflow (route view + capture form + receipt), built in main.tsx because it owns the offline queue. */
   collectorHome: ReactNode;
-  /** Existing manager variance dashboard, mounted for admin/manager. */
   reconciliation: ReactNode;
 }
 
-/** Hidden means not rendered; unlisted paths bounce home. The server stays the authority. */
 function Guard({ role }: { role: Role }) {
   const location = useLocation();
   const context = useOutletContext<ShellOutletContext>();
   if (!canAccess(role, location.pathname)) return <Navigate to="/" replace />;
-  // Suspense lives inside the shell so lazy pages never blank the nav.
   return <Suspense fallback={<p className="empty-state" role="status">Loading…</p>}><Outlet context={context} /></Suspense>;
 }
 
 export function AppRoutes({ shell, collectorHome, reconciliation }: Props) {
   const role: Role = isRole(shell.identity.role) ? shell.identity.role : 'client';
-  const classic = <PortalDashboard identity={shell.identity} />;
   const manager = role === 'admin' || role === 'manager';
+  const reports = manager ? <ManagerAnalyticsDashboard identity={shell.identity} />
+    : role === 'accountant' ? <AccountantAuditDashboard identity={shell.identity} />
+    : role === 'marketing' ? <MarketingProductReach identity={shell.identity} />
+    : <Placeholder title="Reports" phase={4} />;
 
   return (
-    <>
-      <Routes>
-        <Route element={<AppShell {...shell} />}>
-          <Route element={<Guard role={role} />}>
-            <Route index element={role === 'collector' ? collectorHome : <ActionCenter />} />
+    <Routes>
+      <Route element={<AppShell {...shell} />}>
+        <Route element={<Guard role={role} />}>
+          <Route index element={role === 'collector' ? collectorHome : <ActionCenter />} />
 
-            <Route path="applications/new" element={<NewApplication />} />
-            <Route path="applications/record/:id" element={<ApplicationRecord />} />
-            <Route path="applications/:queue?" element={<QueuePage module="applications" />} />
-            <Route path="loans/record/:id" element={<LoanRecord />} />
-            <Route path="loans/:queue?" element={<QueuePage module="loans" />} />
-            <Route path="clients" element={<QueuePage module="clients" />} />
-            <Route path="clients/new" element={<NewClient />} />
-            <Route path="clients/:id" element={<ClientRecord />} />
+          <Route path="applications/new" element={<NewApplication />} />
+          <Route path="applications/record/:id" element={<ApplicationRecord />} />
+          <Route path="applications/:queue?" element={<QueuePage module="applications" />} />
+          <Route path="loans/record/:id" element={<LoanRecord />} />
+          <Route path="loans/:queue?" element={<QueuePage module="loans" />} />
+          <Route path="clients" element={<QueuePage module="clients" />} />
+          <Route path="clients/new" element={<NewClient />} />
+          <Route path="clients/:id" element={<ClientRecord />} />
 
-            <Route path="collections" element={role === 'collector' ? collectorHome : <Placeholder title="Collections" phase={4} />} />
-            <Route path="reconciliation" element={manager ? reconciliation : <Placeholder title="Reconciliation" phase={4} />} />
+          <Route path="collections" element={role === 'collector' ? collectorHome : <Placeholder title="Collections" phase={4} />} />
+          <Route path="reconciliation" element={manager ? reconciliation : <Placeholder title="Reconciliation" phase={4} />} />
+          <Route path="reports" element={reports} />
+          <Route path="apply" element={<NewApplication />} />
 
-            {/* Existing dashboards stay mounted until Phases 3-5 reach parity. */}
-            <Route path="reports" element={classic} />
-            <Route path="workspace" element={classic} />
-            <Route path="apply" element={<NewApplication />} />
-
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
-      </Routes>
-    </>
+      </Route>
+    </Routes>
   );
 }
