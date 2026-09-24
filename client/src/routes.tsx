@@ -19,6 +19,7 @@ interface Props {
   shell: ShellProps;
   collectorHome: ReactNode;
   reconciliation: ReactNode;
+  accountantReconciliation: ReactNode;
 }
 
 function Guard({ role }: { role: Role }) {
@@ -28,13 +29,16 @@ function Guard({ role }: { role: Role }) {
   return <Suspense fallback={<p className="empty-state" role="status">Loading…</p>}><Outlet context={context} /></Suspense>;
 }
 
-export function AppRoutes({ shell, collectorHome, reconciliation }: Props) {
+export function AppRoutes({ shell, collectorHome, reconciliation, accountantReconciliation }: Props) {
   const role: Role = isRole(shell.identity.role) ? shell.identity.role : 'client';
   const manager = role === 'admin' || role === 'manager';
   const reports = manager ? <ManagerAnalyticsDashboard identity={shell.identity} />
     : role === 'accountant' ? <AccountantAuditDashboard identity={shell.identity} />
     : role === 'marketing' ? <MarketingProductReach identity={shell.identity} />
     : <Placeholder title="Reports" phase={4} />;
+  const reconciliationView = manager ? reconciliation
+    : role === 'accountant' ? accountantReconciliation
+    : <Placeholder title="Reconciliation" phase={5} />;
 
   return (
     <Routes>
@@ -52,7 +56,7 @@ export function AppRoutes({ shell, collectorHome, reconciliation }: Props) {
           <Route path="clients/:id" element={<ClientRecord />} />
 
           <Route path="collections" element={role === 'collector' ? collectorHome : <Placeholder title="Collections" phase={4} />} />
-          <Route path="reconciliation" element={manager ? reconciliation : <Placeholder title="Reconciliation" phase={4} />} />
+          <Route path="reconciliation" element={reconciliationView} />
           <Route path="reports" element={reports} />
           <Route path="apply" element={<NewApplication />} />
 

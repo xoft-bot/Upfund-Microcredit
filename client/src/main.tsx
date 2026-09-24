@@ -14,10 +14,12 @@ import type { FieldCollectionRecord, QueueMetrics, QueueSnapshot } from './types
 import { CollectorReportingDashboard } from './components/portals/CollectorReportingDashboard.js';
 import { SignInCard } from './components/auth/SignInCard.js';
 import { AppRoutes } from './routes.js';
+import type { VarianceBatch } from './components/field/ManagerVarianceDashboard.js';
 
 const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
 const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
 const LazyManagerVarianceDashboard = lazy(async () => { const module = await import('./components/field/ManagerVarianceDashboard.js'); return { default: module.ManagerVarianceDashboard }; });
+const LazyAccountantReconciliationView = lazy(async () => { const module = await import('./components/field/AccountantReconciliationView.js'); return { default: module.AccountantReconciliationView }; });
 const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
 const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0, stale: 0 };
 const COLLECTION_QUEUE_ROLES = ['admin', 'manager', 'officer', 'collector'];
@@ -63,6 +65,30 @@ function serverRecordToFieldRecord(record: CollectionRecordResult): FieldCollect
     syncedAt: record.syncedAt ?? undefined,
     retryCount: 0,
   };
+}
+
+function toVarianceBatches(batches: ReconciliationQueueBatch[]): VarianceBatch[] {
+  return batches.map((batch) => ({
+    batchReference: batch.batchReference,
+    branchId: batch.branchId,
+    collectionDate: batch.collectionDate,
+    expectedAmount: batch.expectedAmount,
+    recordedAmount: batch.recordedAmount,
+    submittedAmount: batch.submittedAmount,
+    variance: batch.variance,
+    status: batch.status,
+    decisionReason: batch.decisionReason,
+    reviewedAt: batch.reviewedAt,
+    submittedBy: batch.submittedByName ?? batch.submittedBy,
+    submittedById: batch.submittedBy,
+    payments: batch.payments.map((payment) => ({
+      paymentId: payment.paymentId,
+      clientId: payment.clientId ?? 'Unknown client',
+      amount: payment.amount,
+      receiptReference: payment.receiptReference ?? undefined,
+      status: payment.status,
+    })),
+  }));
 }
 
 function App() {
@@ -144,7 +170,7 @@ function App() {
           const assigned = await getAssignedLoans(token);
           if (active) setAssignedLoans(assigned.loans);
         } else if (active) setAssignedLoans([]);
-        if (['admin', 'manager'].includes(nextIdentity.role) && canLoadBranchScoped) {
+        if (['admin', 'manager', 'accountant'].includes(nextIdentity.role) && canLoadBranchScoped) {
           const reconciliations = await getReconciliationQueue(token, { branchId: adminSelectedBranchId });
           if (active) setReconciliationBatches(reconciliations.batches);
         } else if (active) setReconciliationBatches([]);
@@ -195,6 +221,7 @@ function App() {
   const metrics = queueSnapshot.metrics ?? emptyMetrics;
   const collectorContextReady = Boolean(identity && ['collector', 'officer'].includes(identity.role) && identity.branchId);
   const managerContext = identity && ['admin', 'manager'].includes(identity.role) ? identity : null;
+  const accountantContext = identity && identity.role === 'accountant' ? identity : null;
   const routeName = identity?.branchName ? `${identity.branchName} route` : 'Assigned collection route';
   const displayedRecords = [...serverRecords, ...records.filter((local) => !serverRecords.some((server) => server.localId === local.localId))];
 
@@ -234,29 +261,17 @@ function App() {
     </div>
     : <p className="empty-state workflow-empty">{['collector', 'officer'].includes(identity.role) ? 'This account has no branch assignment, so collections are unavailable.' : 'No field collection workflow is assigned to this account.'}</p>;
 
-  // Existing manager variance dashboard, unchanged, mounted as the content of Reconciliation.
+  // Existing manager variance dashboard, unchanged except the self-approval guard added this phase.
   const reconciliation = managerContext
     ? <Suspense fallback={<p className="empty-state">Loading manager review…</p>}>
-      <LazyManagerVarianceDashboard batches={reconciliationBatches.map((batch) => ({
-        batchReference: batch.batchReference,
-        branchId: batch.branchId,
-        collectionDate: batch.collectionDate,
-        expectedAmount: batch.expectedAmount,
-        recordedAmount: batch.recordedAmount,
-        submittedAmount: batch.submittedAmount,
-        variance: batch.variance,
-        status: batch.status,
-        decisionReason: batch.decisionReason,
-        reviewedAt: batch.reviewedAt,
-        submittedBy: batch.submittedByName ?? batch.submittedBy,
-        payments: batch.payments.map((payment) => ({
-          paymentId: payment.paymentId,
-          clientId: payment.clientId ?? 'Unknown client',
-          amount: payment.amount,
-          receiptReference: payment.receiptReference ?? undefined,
-          status: payment.status,
-        })),
-      }))} branchId={managerContext.branchId} getToken={getToken} onResolved={(batchReference) => setReconciliationBatches((current) => current.filter((batch) => batch.batchReference !== batchReference))} />
+      <LazyManagerVarianceDashboard batches={toVarianceBatches(reconciliationBatches)} branchId={managerContext.branchId} currentUserId={managerContext.userId} getToken={getToken} onResolved={(batchReference) => setReconciliationBatches((current) => current.filter((batch) => batch.batchReference !== batchReference))} />
+    </Suspense>
+    : null;
+
+  // Read-only accountant evidence view — same batches, no decision actions.
+  const accountantReconciliation = accountantContext
+    ? <Suspense fallback={<p className="empty-state">Loading reconciliation evidence…</p>}>
+      <LazyAccountantReconciliationView batches={toVarianceBatches(reconciliationBatches)} branchId={accountantContext.branchId} />
     </Suspense>
     : null;
 
@@ -266,6 +281,7 @@ function App() {
         shell={{ identity, email: session?.email ?? undefined, backendLive, identityError, onSignOut: () => void signOutFirebase(), getToken, versionLabel: `System version v${appVersion} (${gitSha})` }}
         collectorHome={collectorHome}
         reconciliation={reconciliation}
+        accountantReconciliation={accountantReconciliation}
       />
     </BrowserRouter>
   );
