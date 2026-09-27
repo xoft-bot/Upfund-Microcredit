@@ -13,3 +13,4 @@
 - [Dependency override audits](dependency-override-audits.md) — verify resolved lockfile trees when a scanner ignores npm overrides and reports an uninstalled vulnerable version.
 - [Workspace security scanner scope](workspace-security-scanner-scope.md) — reconcile platform scan paths and versions against the active pnpm lockfile before changing dependencies or deleting backups.
 - [Supabase MCP concurrent migrations](supabase-mcp-concurrent-migrations.md) — applyMigration is transactional and rejects CREATE INDEX CONCURRENTLY.
+- [Offline queue monitoring](offline-queue-monitoring.md) — stale queue metrics are server-scoped and require unsynced records older than the seven-day threshold.
