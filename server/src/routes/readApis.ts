@@ -36,7 +36,7 @@ function requestedBranch(request: FastifyRequest): string | undefined {
   const query = request.query as Query;
   return query.branchId ?? request.actor?.branchId ?? undefined;
 }
-export type ScopeKind = 'application' | 'loan' | 'client' | 'payment' | 'reconciliation' | 'audit';
+export type ScopeKind = 'application' | 'loan' | 'client' | 'payment' | 'reconciliation' | 'audit' | 'field_collection';
 type Scope = { sql: string; values: string[]; next: number };
 const denyAll = (start: number): Scope => ({ sql: 'FALSE', values: [], next: start });
 /**
@@ -53,6 +53,7 @@ export function scopeFor(actor: Actor, kind: ScopeKind, alias: string, requested
     if (kind === 'application' || kind === 'loan') parts.push(`${alias}.client_id = ${bind(actor.clientId)}`);
     else if (kind === 'client') parts.push(`${alias}.id = ${bind(actor.clientId)}`);
     else if (kind === 'payment') parts.push(`EXISTS (SELECT 1 FROM loans cl WHERE cl.id = ${alias}.loan_id AND cl.client_id = ${bind(actor.clientId)})`);
+    else if (kind === 'field_collection') parts.push(`${alias}.client_id = ${bind(actor.clientId)}`);
     else return denyAll(start);
     return { sql: parts.join(' AND '), values, next: n };
   }
@@ -68,10 +69,12 @@ export function scopeFor(actor: Actor, kind: ScopeKind, alias: string, requested
     else if (kind === 'loan') parts.push(`EXISTS (SELECT 1 FROM loan_applications oa WHERE oa.id = ${alias}.application_id AND oa.created_by = ${me()})`);
     else if (kind === 'payment') parts.push(`EXISTS (SELECT 1 FROM loans ol JOIN loan_applications oa ON oa.id = ol.application_id WHERE ol.id = ${alias}.loan_id AND oa.created_by = ${me()})`);
     else if (kind === 'audit') parts.push(`${alias}.actor_user_id = ${me()}`);
+    else if (kind === 'field_collection') parts.push(`${alias}.collector_id = ${me()}`);
     // clients/reconciliations stay branch-wide for officers: clients has no created_by column (see spec section 9).
   } else if (actor.role === 'collector') {
-    if (kind !== 'loan') return denyAll(start);
-    parts.push(`EXISTS (SELECT 1 FROM collector_assignments ca WHERE ca.client_id = ${alias}.client_id AND ca.officer_id = ${bind(actor.dbUserId)} AND ca.effective_from <= CURRENT_DATE AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE))`);
+    if (kind === 'loan') parts.push(`EXISTS (SELECT 1 FROM collector_assignments ca WHERE ca.client_id = ${alias}.client_id AND ca.officer_id = ${bind(actor.dbUserId)} AND ca.effective_from <= CURRENT_DATE AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE))`);
+    else if (kind === 'field_collection') parts.push(`${alias}.collector_id = ${bind(actor.dbUserId)}`);
+    else return denyAll(start);
   }
   return { sql: parts.join(' AND '), values, next: n };
 }
@@ -155,16 +158,37 @@ export function registerReadApiRoutes(app: FastifyInstance, verifier?: TokenVeri
   const auth = authMiddleware(verifier, resolver);
   app.get('/api/v1/queues/counts', { preHandler: [auth, requireRoles([...new Set([...staffRoles, 'collector', 'accountant', 'client'])] as UserRole[]), requireBranchScope(requestedBranch)], schema: querySchema() }, async (request) => {
     const actor = request.actor!; const query = request.query as PageQuery; const requested = query.branchId;
-    const appScope = scopeFor(actor, 'application', 'la', requested); const loanScope = scopeFor(actor, 'loan', 'l', requested); const paymentScope = scopeFor(actor, 'payment', 'p', requested); const recScope = scopeFor(actor, 'reconciliation', 'r', requested);
-    const [applications, loans, payments, reconciliations, dueToday] = await Promise.all([
+    const appScope = scopeFor(actor, 'application', 'la', requested); const loanScope = scopeFor(actor, 'loan', 'l', requested); const paymentScope = scopeFor(actor, 'payment', 'p', requested); const recScope = scopeFor(actor, 'reconciliation', 'r', requested); const fieldCollectionScope = scopeFor(actor, 'field_collection', 'f', requested);
+    const [applications, loans, payments, reconciliations, dueToday, offlineQueue] = await Promise.all([
       pool.query(`SELECT status, count(*)::int AS count FROM loan_applications la WHERE ${appScope.sql} GROUP BY status`, appScope.values),
       pool.query(`SELECT status, count(*)::int AS count FROM loans l WHERE ${loanScope.sql} GROUP BY status`, loanScope.values),
       pool.query(`SELECT status, count(*)::int AS count FROM payments p WHERE ${paymentScope.sql} GROUP BY status`, paymentScope.values),
       pool.query(`SELECT status, count(*)::int AS count FROM reconciliations r WHERE ${recScope.sql} GROUP BY status`, recScope.values),
       pool.query(`SELECT count(DISTINCT l.id)::int AS count FROM loans l JOIN repayment_schedules rs ON rs.loan_id = l.id WHERE ${loanScope.sql} AND rs.status = 'open' AND rs.due_on = CURRENT_DATE`, loanScope.values),
+      pool.query<{ pending: string; stale: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE f.status IN ('recorded', 'pending_reconciliation'))::int AS pending,
+           COUNT(*) FILTER (
+             WHERE f.status IN ('recorded', 'pending_reconciliation')
+               AND f.synced_at IS NULL
+               AND f.captured_at < NOW() - INTERVAL '7 days'
+           )::int AS stale
+         FROM field_collection_records f
+         WHERE ${fieldCollectionScope.sql}`,
+        fieldCollectionScope.values,
+      ),
     ]);
     const group = (rows: Array<{ status: string; count: number }>) => Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
-    return envelope(request, { applications: group(applications.rows), loans: { ...group(loans.rows), due_today: Number(dueToday.rows[0]?.count ?? 0) }, payments: group(payments.rows), reconciliations: group(reconciliations.rows) });
+    return envelope(request, {
+      applications: group(applications.rows),
+      loans: { ...group(loans.rows), due_today: Number(dueToday.rows[0]?.count ?? 0) },
+      payments: group(payments.rows),
+      reconciliations: group(reconciliations.rows),
+      offline_queue: {
+        pending: Number(offlineQueue.rows[0]?.pending ?? 0),
+        stale: Number(offlineQueue.rows[0]?.stale ?? 0),
+      },
+    });
   });
   registerList(app, auth, '/api/v1/loan-applications', applicationRoles, pagedApplications, { queue: { type: 'string', enum: [...appQueues] } });
   registerList(app, auth, '/api/v1/loans', loanRoles, pagedLoans, { queue: { type: 'string', enum: [...loanQueues] } });

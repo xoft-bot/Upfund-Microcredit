@@ -69,12 +69,21 @@ describe('Phase 1 read API authorization and pagination', () => {
       .mockResolvedValueOnce({ rows: [{ status: 'active', count: 3 }], rowCount: 1 } as never)
       .mockResolvedValueOnce({ rows: [{ status: 'posted', count: 4 }], rowCount: 1 } as never)
       .mockResolvedValueOnce({ rows: [{ status: 'pending', count: 1 }], rowCount: 1 } as never)
-      .mockResolvedValueOnce({ rows: [{ count: 5 }], rowCount: 1 } as never);
+      .mockResolvedValueOnce({ rows: [{ count: 5 }], rowCount: 1 } as never)
+      .mockResolvedValueOnce({ rows: [{ pending: '6', stale: '2' }], rowCount: 1 } as never);
     const app = await makeApp();
     const response = await app.inject({ method: 'GET', url: '/api/v1/queues/counts', headers: { authorization: 'Bearer valid' } });
     expect(response.statusCode).toBe(200);
-    expect(response.json().data).toEqual({ applications: { submitted: 2 }, loans: { active: 3, due_today: 5 }, payments: { posted: 4 }, reconciliations: { pending: 1 } });
+    expect(response.json().data).toEqual({
+      applications: { submitted: 2 },
+      loans: { active: 3, due_today: 5 },
+      payments: { posted: 4 },
+      reconciliations: { pending: 1 },
+      offline_queue: { pending: 6, stale: 2 },
+    });
     expect(query.mock.calls[0][1]).toEqual([branchA]);
+    expect(query.mock.calls[5][1]).toEqual([branchA]);
+    expect(query.mock.calls[5][0]).toContain('f.synced_at IS NULL');
     await app.close();
   });
 

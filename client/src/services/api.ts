@@ -185,7 +185,9 @@ export function disburseLoan(id: string, command: { disbursementReference: strin
 // ---------------------------------------------------------------------------
 export type ListRow = Record<string, unknown>;
 /** Shape: { applications: { draft: n, ... }, loans: { ..., due_today: n }, payments: { ... } } */
-export type QueueCounts = Record<string, Record<string, number>>;
+export type QueueCounts = Record<string, Record<string, number> | undefined> & {
+  offline_queue?: { pending: number; stale: number };
+};
 export interface Paged<T = ListRow> { items: T[]; total: number; page: number; pageSize: number }
 export interface ListParams { page?: number; pageSize?: number; q?: string; queue?: string; status?: string; product?: string; from?: string; to?: string; branchId?: string }
 export interface SearchResults { clients?: ListRow[]; loans?: ListRow[]; applications?: ListRow[]; receipts?: ListRow[] }

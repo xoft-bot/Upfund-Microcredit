@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import type { AuthIdentity } from '../../services/firebase.js';
 import { getFirebaseIdToken } from '../../services/firebase.js';
 import { ApiRequestError, getManagerReport } from '../../services/api.js';
 import type { ManagerReportingSnapshot } from '../../../../shared/reporting.js';
+import type { ShellOutletContext } from '../shell/AppShell.js';
+import { StaleQueueMetricCard } from '../analytics/StaleQueueMetricCard.js';
 
 interface ManagerAnalyticsDashboardProps { identity: AuthIdentity; }
 
@@ -19,6 +22,8 @@ function ParCard({ label, metric }: { label: string; metric: ManagerReportingSna
 }
 
 export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboardProps) {
+  const navigate = useNavigate();
+  const { counts: queueCounts, error: queueCountsError, loading: queueCountsLoading } = useOutletContext<ShellOutletContext>();
   const [snapshot, setSnapshot] = useState<ManagerReportingSnapshot | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -73,11 +78,18 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
       <button className="secondary-button" type="submit" disabled={loading}>Refresh report</button>
     </form>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="reporting-kpis">
+     <div className="reporting-kpis">
       <Kpi label="Outstanding portfolio" value={money(snapshot.summary.portfolioOutstanding)} detail={`${snapshot.summary.activeLoans} active loans`} />
       <Kpi label="Collection efficiency" value={percent(snapshot.summary.collectionEfficiency)} detail={`${money(snapshot.summary.realizedDueAmount)} of ${money(snapshot.summary.scheduledAmount)} due`} tone="positive" />
       <Kpi label="Disbursed in period" value={money(snapshot.summary.disbursementAmount)} detail={`${snapshot.summary.disbursementCount} disbursements`} />
       <Kpi label="Open reconciliations" value={String(snapshot.openReconciliations.count)} detail={`${money(snapshot.openReconciliations.variance)} total variance`} tone={snapshot.openReconciliations.count ? 'warning' : 'positive'} />
+       <StaleQueueMetricCard
+         staleCount={queueCounts?.offline_queue?.stale ?? 0}
+         totalPendingQueueCount={queueCounts?.offline_queue?.pending ?? 0}
+         isLoading={queueCountsLoading}
+         error={queueCountsError}
+         onNavigateToQueue={() => navigate('/collections/offline-queue')}
+       />
     </div>
     <div className="par-grid"><ParCard label="PAR 30" metric={snapshot.summary.par30} /><ParCard label="PAR 60" metric={snapshot.summary.par60} /><ParCard label="PAR 90" metric={snapshot.summary.par90} /></div>
     <div className="reporting-grid">

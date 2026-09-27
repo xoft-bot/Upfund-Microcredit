@@ -57,6 +57,7 @@ export function AppRoutes({ shell, collectorHome, reconciliation, accountantReco
           <Route path="clients/:id" element={<ClientRecord />} />
 
           <Route path="collections" element={role === 'collector' ? collectorHome : manager ? assignmentManager : <Placeholder title="Collections" phase={4} />} />
+          <Route path="collections/offline-queue" element={<Placeholder title="Offline queue" phase={3} />} />
           <Route path="reconciliation" element={reconciliationView} />
           <Route path="reports" element={reports} />
           <Route path="apply" element={<NewApplication />} />
