@@ -12,7 +12,7 @@ export function registerReconciliationRoutes(app: FastifyInstance, verifier?: To
   app.get<{ Querystring: ReconciliationQuery }>('/api/v1/reconciliations/queue', {
     preHandler: [
       authMiddleware(verifier, resolveUser),
-      requireRoles(['admin', 'manager']),
+      requireRoles(['admin', 'manager', 'accountant']),
       requireBranchScope((request) => (request.query as ReconciliationQuery | undefined)?.branchId ?? request.actor?.branchId ?? undefined),
     ],
     schema: { querystring: { type: 'object', additionalProperties: false, properties: { branchId: { type: 'string', minLength: 1 }, limit: { type: 'string', pattern: '^[1-9][0-9]{0,2}$' } } } },
