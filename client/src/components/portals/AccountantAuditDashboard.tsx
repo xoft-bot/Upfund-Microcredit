@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { AuthIdentity } from '../../services/firebase.js';
 import { getFirebaseIdToken } from '../../services/firebase.js';
-import { ApiRequestError, getAccountantReport } from '../../services/api.js';
+import { ApiRequestError, getAccountantReport, getParThresholds, updateParThresholds, type ParThresholdConfig } from '../../services/api.js';
 import type { AccountantReportingSnapshot } from '../../../../shared/reporting.js';
 
 interface AccountantAuditDashboardProps { identity: AuthIdentity; }
@@ -21,6 +21,64 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
   const [branchId, setBranchId] = useState(identity.role === 'accountant' ? identity.branchId ?? '' : '');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // PAR threshold config (Phase 3a): a small, independent read/edit panel — it doesn't
+  // share loading state with the reporting snapshot above, since a failure here shouldn't
+  // block the rest of the accounting view, and it isn't affected by the branch/date filters.
+  const [thresholds, setThresholds] = useState<ParThresholdConfig | null>(null);
+  const [thresholdDraft, setThresholdDraft] = useState({ par30Days: '', par60Days: '', par90Days: '' });
+  const [thresholdError, setThresholdError] = useState('');
+  const [thresholdSaving, setThresholdSaving] = useState(false);
+  const [thresholdSaved, setThresholdSaved] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const token = await getFirebaseIdToken();
+        if (!token) return;
+        const config = await getParThresholds(token);
+        setThresholds(config);
+        setThresholdDraft({ par30Days: String(config.par30Days), par60Days: String(config.par60Days), par90Days: String(config.par90Days) });
+      } catch {
+        // Non-fatal: the panel just stays hidden (see the `!thresholds` guard below)
+        // rather than surfacing a second error banner alongside the main one.
+      }
+    })();
+  }, []);
+
+  const submitThresholds = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setThresholdError('');
+    setThresholdSaved(false);
+    const parsed = {
+      par30Days: Number(thresholdDraft.par30Days),
+      par60Days: Number(thresholdDraft.par60Days),
+      par90Days: Number(thresholdDraft.par90Days),
+    };
+    if (!Object.values(parsed).every((value) => Number.isInteger(value) && value > 0)) {
+      setThresholdError('Each window must be a whole number of days greater than 0.');
+      return;
+    }
+    if (!(parsed.par30Days < parsed.par60Days && parsed.par60Days < parsed.par90Days)) {
+      setThresholdError('PAR30 must be less than PAR60, which must be less than PAR90.');
+      return;
+    }
+    setThresholdSaving(true);
+    try {
+      const token = await getFirebaseIdToken();
+      if (!token) throw new Error('AUTH_TOKEN_UNAVAILABLE');
+      const updated = await updateParThresholds(token, parsed);
+      setThresholds(updated);
+      setThresholdSaved(true);
+    } catch (saveError) {
+      setThresholdError(
+        saveError instanceof ApiRequestError && saveError.code === 'FORBIDDEN'
+          ? 'Your account is not authorized to change PAR thresholds.'
+          : saveError instanceof Error ? saveError.message : 'PAR_THRESHOLD_UPDATE_FAILED',
+      );
+    } finally {
+      setThresholdSaving(false);
+    }
+  };
 
   const load = useCallback(async (filters: { branchId?: string; from?: string; to?: string } = {}) => {
     setLoading(true);
@@ -65,6 +123,18 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
       <button className="secondary-button" type="submit" disabled={loading}>Refresh audit view</button>
     </form>
     {error && <p className="form-error" role="alert">{error}</p>}
+    {thresholds && <section className="portal-card reporting-panel" aria-labelledby="par-threshold-title">
+      <div className="portal-card-heading"><div><p className="eyebrow">PAR configuration</p><h3 id="par-threshold-title">Portfolio-at-risk thresholds</h3></div></div>
+      <p className="note">Windows used everywhere PAR30/60/90 is reported. Last changed {thresholds.updatedBy ? dateTime(thresholds.updatedAt) : 'never — still the original defaults'}.</p>
+      <form className="reporting-filters" onSubmit={(event) => void submitThresholds(event)}>
+        <label>PAR30 (days)<input type="number" min={1} value={thresholdDraft.par30Days} onChange={(event) => setThresholdDraft((draft) => ({ ...draft, par30Days: event.target.value }))} /></label>
+        <label>PAR60 (days)<input type="number" min={1} value={thresholdDraft.par60Days} onChange={(event) => setThresholdDraft((draft) => ({ ...draft, par60Days: event.target.value }))} /></label>
+        <label>PAR90 (days)<input type="number" min={1} value={thresholdDraft.par90Days} onChange={(event) => setThresholdDraft((draft) => ({ ...draft, par90Days: event.target.value }))} /></label>
+        <button className="secondary-button" type="submit" disabled={thresholdSaving}>{thresholdSaving ? 'Saving…' : 'Save thresholds'}</button>
+      </form>
+      {thresholdError && <p className="form-error" role="alert">{thresholdError}</p>}
+      {thresholdSaved && !thresholdError && <p className="note" role="status">Saved.</p>}
+    </section>}
     <div className="reporting-kpis">
       <AuditMetric label="Posted journal entries" value={String(snapshot.journalEntries.length)} detail={`${snapshot.journalEntries.filter((entry) => entry.balanced).length} balanced`} tone="positive" />
       <AuditMetric label="Posted payment value" value={money(snapshot.waterfallTotals.postedAmount)} detail={`${snapshot.waterfallAllocations.length} payment allocations`} />

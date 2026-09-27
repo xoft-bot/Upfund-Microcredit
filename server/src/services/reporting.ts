@@ -1,4 +1,5 @@
 import { pool } from '../db.js';
+import { getParThresholdConfig } from './par-threshold-config.js';
 import type {
   BranchPerformance,
   CollectionBreakdown,
@@ -57,9 +58,15 @@ interface PortfolioRow {
 }
 
 async function readPortfolio(input: NormalizedReportingInput): Promise<ManagerReportingSnapshot['summary']> {
+  // Threshold days come from par_threshold_config (migration 020) rather than being
+  // hardcoded here, but the table is seeded with these same 30/60/90 defaults — see
+  // HANDOFF_6 §3 / rule 5: nothing changes these without an explicit accountant/admin
+  // PATCH to /api/v1/reporting/par-thresholds.
+  const thresholds = await getParThresholdConfig();
   const result = await pool.query<PortfolioRow>(
     `WITH params AS (
-       SELECT $1::uuid AS branch_id, $2::date AS from_date, $3::date AS to_date, $4::date AS as_of
+       SELECT $1::uuid AS branch_id, $2::date AS from_date, $3::date AS to_date, $4::date AS as_of,
+              $5::int AS par30_days, $6::int AS par60_days, $7::int AS par90_days
      ),
      eligible_loans AS (
        SELECT l.id, l.branch_id, l.outstanding_principal
@@ -77,9 +84,9 @@ async function readPortfolio(input: NormalizedReportingInput): Promise<ManagerRe
      ),
      overdue_loans AS (
        SELECT s.loan_id,
-              BOOL_OR(s.due_on <= x.as_of - 30 AND s.principal_due > GREATEST(s.principal_paid, COALESCE(ps.principal_paid, 0))) AS par30,
-              BOOL_OR(s.due_on <= x.as_of - 60 AND s.principal_due > GREATEST(s.principal_paid, COALESCE(ps.principal_paid, 0))) AS par60,
-              BOOL_OR(s.due_on <= x.as_of - 90 AND s.principal_due > GREATEST(s.principal_paid, COALESCE(ps.principal_paid, 0))) AS par90
+              BOOL_OR(s.due_on <= x.as_of - x.par30_days AND s.principal_due > GREATEST(s.principal_paid, COALESCE(ps.principal_paid, 0))) AS par30,
+              BOOL_OR(s.due_on <= x.as_of - x.par60_days AND s.principal_due > GREATEST(s.principal_paid, COALESCE(ps.principal_paid, 0))) AS par60,
+              BOOL_OR(s.due_on <= x.as_of - x.par90_days AND s.principal_due > GREATEST(s.principal_paid, COALESCE(ps.principal_paid, 0))) AS par90
        FROM repayment_schedules s
        JOIN eligible_loans l ON l.id = s.loan_id
        CROSS JOIN params x
@@ -136,7 +143,7 @@ async function readPortfolio(input: NormalizedReportingInput): Promise<ManagerRe
        (SELECT disbursement_amount FROM disbursements) AS disbursement_amount
      FROM eligible_loans l
      LEFT JOIN overdue_loans o ON o.loan_id = l.id`,
-    [input.branchId, input.from, input.to, input.asOf],
+    [input.branchId, input.from, input.to, input.asOf, thresholds.par30Days, thresholds.par60Days, thresholds.par90Days],
   );
   const row = result.rows[0];
   const portfolioOutstanding = toNumber(row.portfolio_outstanding);

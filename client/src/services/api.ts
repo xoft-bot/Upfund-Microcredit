@@ -141,6 +141,13 @@ export function getAccountantReport(token: string, options: { branchId?: string;
   if (options.to) params.set('to', options.to);
   return request<AccountantReportingSnapshot>(`/api/v1/reports/accountant${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
 }
+export interface ParThresholdConfig { par30Days: number; par60Days: number; par90Days: number; updatedBy: string | null; updatedAt: string; }
+export function getParThresholds(token: string): Promise<ParThresholdConfig> {
+  return request<ParThresholdConfig>('/api/v1/reporting/par-thresholds', { headers: { authorization: `Bearer ${token}` } });
+}
+export function updateParThresholds(token: string, input: { par30Days: number; par60Days: number; par90Days: number }): Promise<ParThresholdConfig> {
+  return request<ParThresholdConfig>('/api/v1/reporting/par-thresholds', { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(input) });
+}
 export function getCollectorReport(token: string, options: { branchId?: string; collectorId?: string; asOf?: string; from?: string; to?: string } = {}): Promise<CollectorReportingSnapshot> {
   const params = new URLSearchParams();
   if (options.branchId) params.set('branchId', options.branchId);
