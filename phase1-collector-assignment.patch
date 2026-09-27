@@ -1,0 +1,961 @@
+diff --git a/client/src/components/field/AssignmentManager.tsx b/client/src/components/field/AssignmentManager.tsx
+new file mode 100644
+index 0000000..c030c20
+--- /dev/null
++++ b/client/src/components/field/AssignmentManager.tsx
+@@ -0,0 +1,131 @@
++import { useCallback, useEffect, useState } from 'react';
++import {
++  getAssignmentWorkspace, createCollectorAssignment, endCollectorAssignment,
++  ApiRequestError, type AssignmentWorkspace, type AssignmentRow,
++} from '../../services/api.js';
++
++interface AssignmentManagerProps {
++  branchId: string | null;
++  getToken: () => Promise<string>;
++  apiBaseUrl?: string;
++}
++
++const EMPTY_WORKSPACE: AssignmentWorkspace = { assignments: [], unassignedClients: [], collectors: [] };
++
++/**
++ * Manager/admin Collections screen. Replaces the `Placeholder phase={4}`
++ * that previously rendered for every non-collector role on this route —
++ * see the routing note in routes.tsx. This is the first UI on top of the
++ * collector-assignments write endpoints (server/src/routes/collectorAssignments.ts):
++ * before this, the only way to put a client on a collector's route was a
++ * direct SQL insert.
++ */
++export function AssignmentManager({ branchId, getToken, apiBaseUrl = '' }: AssignmentManagerProps) {
++  const [workspace, setWorkspace] = useState<AssignmentWorkspace>(EMPTY_WORKSPACE);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState('');
++  const [busyId, setBusyId] = useState<string | null>(null);
++  const [assigningClientId, setAssigningClientId] = useState<string | null>(null);
++  const [officerId, setOfficerId] = useState('');
++  const [routeCode, setRouteCode] = useState('');
++  const [formError, setFormError] = useState('');
++
++  const reload = useCallback(async () => {
++    if (!branchId) { setWorkspace(EMPTY_WORKSPACE); setLoading(false); return; }
++    setLoading(true);
++    setError('');
++    try {
++      const token = await getToken();
++      const next = await getAssignmentWorkspace(token, { branchId, apiBaseUrl });
++      setWorkspace(next);
++    } catch (loadError) {
++      setError(loadError instanceof ApiRequestError ? loadError.message : 'Could not load assignments. Check your connection and try again.');
++    } finally {
++      setLoading(false);
++    }
++  }, [branchId, getToken, apiBaseUrl]);
++
++  useEffect(() => { void reload(); }, [reload]);
++
++  const startAssign = (clientId: string) => {
++    setAssigningClientId(clientId);
++    setOfficerId(workspace.collectors[0]?.officerId ?? '');
++    setRouteCode('');
++    setFormError('');
++  };
++
++  const submitAssign = async () => {
++    if (!assigningClientId || !branchId) return;
++    if (!officerId) { setFormError('Choose a collector.'); return; }
++    if (!routeCode.trim()) { setFormError('Enter a route code.'); return; }
++    setBusyId(assigningClientId);
++    setFormError('');
++    try {
++      const token = await getToken();
++      await createCollectorAssignment({ branchId, officerId, clientId: assigningClientId, routeCode: routeCode.trim() }, token, apiBaseUrl);
++      setAssigningClientId(null);
++      await reload();
++    } catch (assignError) {
++      setFormError(assignError instanceof ApiRequestError ? assignError.message : 'Could not create this assignment.');
++    } finally {
++      setBusyId(null);
++    }
++  };
++
++  const unassign = async (assignment: AssignmentRow) => {
++    if (!window.confirm(`Unassign ${assignment.officerName} from ${assignment.clientName}?`)) return;
++    setBusyId(assignment.id);
++    setError('');
++    try {
++      const token = await getToken();
++      await endCollectorAssignment(assignment.id, token, { apiBaseUrl });
++      await reload();
++    } catch (unassignError) {
++      setError(unassignError instanceof ApiRequestError ? unassignError.message : 'Could not unassign this collector.');
++    } finally {
++      setBusyId(null);
++    }
++  };
++
++  if (!branchId) return <section className="field-card manager-dashboard"><p className="empty-state">No branch is assigned to this account, so collections cannot be managed here.</p></section>;
++
++  return (
++    <section className="field-card manager-dashboard" aria-labelledby="assignment-manager-title">
++      <p className="eyebrow">Collections</p>
++      <h2 id="assignment-manager-title">Collector assignments</h2>
++      <p className="note">Branch {branchId}. Assign a collector or officer to a client before field collection can begin for them.</p>
++      {error && <p className="form-error" role="alert">{error}</p>}
++      {loading ? <p className="empty-state" role="status">Loading assignments…</p> : <>
++        <h3>Unassigned clients ({workspace.unassignedClients.length})</h3>
++        {workspace.unassignedClients.length === 0 ? <p className="empty-state">Every client in this branch currently has an active collector.</p> : <div className="variance-list">
++          {workspace.unassignedClients.map((client) => <div className="variance-row" key={client.clientId} style={{ cursor: 'default' }}>
++            <span><strong>{client.clientName}</strong></span>
++            {assigningClientId === client.clientId ? null : <button className="secondary-button" type="button" disabled={busyId === client.clientId || workspace.collectors.length === 0} onClick={() => startAssign(client.clientId)}>Assign</button>}
++          </div>)}
++        </div>}
++
++        {assigningClientId && <div className="variance-detail" aria-live="polite">
++          <div className="field-card-heading"><h3>Assign a collector</h3><button className="text-button" type="button" onClick={() => setAssigningClientId(null)}>Close</button></div>
++          {workspace.collectors.length === 0 ? <p className="empty-state">No active collector or officer is registered in this branch yet.</p> : <>
++            {formError && <p className="form-error" role="alert">{formError}</p>}
++            <label>Collector<select value={officerId} onChange={(event) => setOfficerId(event.target.value)}>
++              {workspace.collectors.map((collector) => <option key={collector.officerId} value={collector.officerId}>{collector.officerName} ({collector.role})</option>)}
++            </select></label>
++            <label>Route code<input type="text" value={routeCode} onChange={(event) => setRouteCode(event.target.value)} maxLength={80} placeholder="e.g. NORTH-04" /></label>
++            <div className="action-row">
++              <button className="primary-button" type="button" disabled={busyId === assigningClientId} onClick={() => void submitAssign()}>Confirm assignment</button>
++            </div>
++          </>}
++        </div>}
++
++        <h3>Active assignments ({workspace.assignments.length})</h3>
++        {workspace.assignments.length === 0 ? <p className="empty-state">No collector is currently assigned in this branch.</p> : <div className="variance-list">
++          {workspace.assignments.map((assignment) => <div className="variance-row" key={assignment.id} style={{ cursor: 'default' }}>
++            <span><strong>{assignment.clientName}</strong><small>{assignment.officerName} · route {assignment.routeCode} · since {assignment.effectiveFrom}</small></span>
++            <button className="text-button" type="button" disabled={busyId === assignment.id} onClick={() => void unassign(assignment)}>Unassign</button>
++          </div>)}
++        </div>}
++      </>}
++    </section>
++  );
++}
+diff --git a/client/src/main.tsx b/client/src/main.tsx
+index eda7c21..afab166 100644
+--- a/client/src/main.tsx
++++ b/client/src/main.tsx
+@@ -20,6 +20,7 @@ const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
+ const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
+ const LazyManagerVarianceDashboard = lazy(async () => { const module = await import('./components/field/ManagerVarianceDashboard.js'); return { default: module.ManagerVarianceDashboard }; });
+ const LazyAccountantReconciliationView = lazy(async () => { const module = await import('./components/field/AccountantReconciliationView.js'); return { default: module.AccountantReconciliationView }; });
++const LazyAssignmentManager = lazy(async () => { const module = await import('./components/field/AssignmentManager.js'); return { default: module.AssignmentManager }; });
+ const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
+ const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0, stale: 0 };
+ const COLLECTION_QUEUE_ROLES = ['admin', 'manager', 'officer', 'collector'];
+@@ -275,6 +276,16 @@ function App() {
+     </Suspense>
+     : null;
+ 
++  // Manager/admin Collections screen — replaces the Phase-4 placeholder that
++  // rendered for every non-collector role. Fetches and mutates its own data
++  // (collector-assignments workspace), same self-contained pattern as the
++  // variance dashboards above.
++  const assignmentManager = managerContext
++    ? <Suspense fallback={<p className="empty-state">Loading assignments…</p>}>
++      <LazyAssignmentManager branchId={managerContext.branchId} getToken={getToken} />
++    </Suspense>
++    : null;
++
+   return (
+     <BrowserRouter>
+       <AppRoutes
+@@ -282,6 +293,7 @@ function App() {
+         collectorHome={collectorHome}
+         reconciliation={reconciliation}
+         accountantReconciliation={accountantReconciliation}
++        assignmentManager={assignmentManager}
+       />
+     </BrowserRouter>
+   );
+diff --git a/client/src/routes.tsx b/client/src/routes.tsx
+index 66feb5e..94aa1c4 100644
+--- a/client/src/routes.tsx
++++ b/client/src/routes.tsx
+@@ -20,6 +20,7 @@ interface Props {
+   collectorHome: ReactNode;
+   reconciliation: ReactNode;
+   accountantReconciliation: ReactNode;
++  assignmentManager: ReactNode;
+ }
+ 
+ function Guard({ role }: { role: Role }) {
+@@ -29,7 +30,7 @@ function Guard({ role }: { role: Role }) {
+   return <Suspense fallback={<p className="empty-state" role="status">Loading…</p>}><Outlet context={context} /></Suspense>;
+ }
+ 
+-export function AppRoutes({ shell, collectorHome, reconciliation, accountantReconciliation }: Props) {
++export function AppRoutes({ shell, collectorHome, reconciliation, accountantReconciliation, assignmentManager }: Props) {
+   const role: Role = isRole(shell.identity.role) ? shell.identity.role : 'client';
+   const manager = role === 'admin' || role === 'manager';
+   const reports = manager ? <ManagerAnalyticsDashboard identity={shell.identity} />
+@@ -55,7 +56,7 @@ export function AppRoutes({ shell, collectorHome, reconciliation, accountantReco
+           <Route path="clients/new" element={<NewClient />} />
+           <Route path="clients/:id" element={<ClientRecord />} />
+ 
+-          <Route path="collections" element={role === 'collector' ? collectorHome : <Placeholder title="Collections" phase={4} />} />
++          <Route path="collections" element={role === 'collector' ? collectorHome : manager ? assignmentManager : <Placeholder title="Collections" phase={4} />} />
+           <Route path="reconciliation" element={reconciliationView} />
+           <Route path="reports" element={reports} />
+           <Route path="apply" element={<NewApplication />} />
+diff --git a/client/src/services/api.ts b/client/src/services/api.ts
+index f1060ce..d4272c6 100644
+--- a/client/src/services/api.ts
++++ b/client/src/services/api.ts
+@@ -72,6 +72,12 @@ export interface PortalOverview {
+ export interface CreateClientCommand { branchId: string; externalRef: string; displayName: string; }
+ export interface CreateApplicationCommand { clientId: string; productId: string; branchId?: string; requestedAmount: number; }
+ 
++export interface AssignmentRow { id: string; officerId: string; officerName: string; clientId: string; clientName: string; branchId: string; routeCode: string; effectiveFrom: string; effectiveTo: string | null; }
++export interface UnassignedClient { clientId: string; clientName: string; branchId: string; }
++export interface BranchCollector { officerId: string; officerName: string; role: 'collector' | 'officer'; branchId: string; }
++export interface AssignmentWorkspace { assignments: AssignmentRow[]; unassignedClients: UnassignedClient[]; collectors: BranchCollector[]; }
++export interface CreateAssignmentCommand { branchId: string; officerId: string; clientId: string; routeCode: string; effectiveFrom?: string; }
++
+ export class ApiRequestError extends Error {
+   readonly code: string;
+   readonly correlationId?: string;
+@@ -221,3 +227,15 @@ export function searchAll(token: string, q: string): Promise<SearchResults> {
+ export function getAuditTrail(token: string, params: { entityType?: string; entityId?: string; page?: number; pageSize?: number }): Promise<Paged> {
+   return request<Paged>(`/api/v1/audit${readQuery(params)}`, bearer(token));
+ }
++export function getAssignmentWorkspace(token: string, options: { branchId?: string; apiBaseUrl?: string } = {}): Promise<AssignmentWorkspace> {
++  return request<AssignmentWorkspace>(`/api/v1/collector-assignments${readQuery({ branchId: options.branchId })}`, bearer(token), options.apiBaseUrl);
++}
++export function createCollectorAssignment(command: CreateAssignmentCommand, token: string, apiBaseUrl = ''): Promise<AssignmentRow> {
++  return request<AssignmentRow>('/api/v1/collector-assignments', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(command) }, apiBaseUrl);
++}
++export function updateAssignmentRouteCode(id: string, routeCode: string, token: string, apiBaseUrl = ''): Promise<{ id: string; updated: boolean }> {
++  return request<{ id: string; updated: boolean }>(`/api/v1/collector-assignments/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify({ routeCode }) }, apiBaseUrl);
++}
++export function endCollectorAssignment(id: string, token: string, options: { effectiveTo?: string; apiBaseUrl?: string } = {}): Promise<{ id: string; unassigned: boolean }> {
++  return request<{ id: string; unassigned: boolean }>(`/api/v1/collector-assignments/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(options.effectiveTo ? { effectiveTo: options.effectiveTo } : {}) }, options.apiBaseUrl);
++}
+diff --git a/server/src/app.ts b/server/src/app.ts
+index 2d1a5f4..b6fb9a1 100644
+--- a/server/src/app.ts
++++ b/server/src/app.ts
+@@ -18,6 +18,7 @@ import { registerReportingRoutes } from './routes/reporting.js';
+ import { registerAccountantReportingRoutes } from './routes/accountantReporting.js';
+ import { registerCollectorReportingRoutes } from './routes/collectorReporting.js';
+ import { registerReadApiRoutes } from './routes/readApis.js';
++import { registerCollectorAssignmentRoutes } from './routes/collectorAssignments.js';
+ import { isProductionRuntime, validateRuntimeConfig } from './config.js';
+ 
+ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
+@@ -57,6 +58,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
+   registerAccountantReportingRoutes(app, options.tokenVerifier, options.userResolver);
+   registerCollectorReportingRoutes(app, options.tokenVerifier, options.userResolver);
+   registerReadApiRoutes(app, options.tokenVerifier, options.userResolver);
++  registerCollectorAssignmentRoutes(app, options.tokenVerifier, options.userResolver);
+   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
+   if (process.env.NODE_ENV !== 'production') {
+   app.post('/api/stage1/commands/audit-ledger', {
+diff --git a/server/src/routes/collectorAssignments.ts b/server/src/routes/collectorAssignments.ts
+new file mode 100644
+index 0000000..4183cb3
+--- /dev/null
++++ b/server/src/routes/collectorAssignments.ts
+@@ -0,0 +1,112 @@
++import type { FastifyInstance, FastifyReply } from 'fastify';
++import { SYSTEM_VERSION } from '../../../shared/version.js';
++import { authMiddleware, type TokenVerifier, type UserResolver } from '../middleware/auth.js';
++import { requireBranchScope, requireRoles } from '../middleware/authorization.js';
++import { getAssignmentWorkspace, createAssignment, endAssignment, updateRouteCode } from '../services/collector-assignments.js';
++
++interface WorkspaceQuery { branchId?: string; }
++interface CreateBody { branchId: string; officerId: string; clientId: string; routeCode: string; effectiveFrom?: string; }
++interface EndBody { effectiveTo?: string; }
++interface RouteCodeBody { routeCode: string; }
++interface IdParams { id: string; }
++
++// Every business-rule error the service layer can throw, mapped to the HTTP
++// status the caller actually needs — same convention as PAYMENT_ERROR_STATUS
++// in routes/payments.ts, so a genuinely-invalid request (unknown officer,
++// wrong branch, bad role) never falls through to a generic 500.
++const ASSIGNMENT_ERROR_STATUS: Record<string, { status: number; code: string; message: string }> = {
++  ASSIGNMENT_ROLE_DENIED: { status: 403, code: 'FORBIDDEN', message: 'Only an admin or manager can manage collector assignments' },
++  ASSIGNMENT_BRANCH_DENIED: { status: 403, code: 'BRANCH_SCOPE_DENIED', message: 'Branch scope denied' },
++  OFFICER_NOT_FOUND: { status: 404, code: 'OFFICER_NOT_FOUND', message: 'That user was not found or is not active' },
++  OFFICER_ROLE_INVALID: { status: 400, code: 'OFFICER_ROLE_INVALID', message: 'Only a collector or officer can be assigned to a client' },
++  OFFICER_BRANCH_MISMATCH: { status: 409, code: 'OFFICER_BRANCH_MISMATCH', message: 'That user does not belong to this branch' },
++  CLIENT_NOT_FOUND: { status: 404, code: 'CLIENT_NOT_FOUND', message: 'Client not found' },
++  CLIENT_BRANCH_MISMATCH: { status: 409, code: 'CLIENT_BRANCH_MISMATCH', message: 'That client does not belong to this branch' },
++  ASSIGNMENT_NOT_FOUND: { status: 404, code: 'ASSIGNMENT_NOT_FOUND', message: 'Assignment not found' },
++  ASSIGNMENT_END_DATE_BEFORE_START: { status: 400, code: 'ASSIGNMENT_END_DATE_BEFORE_START', message: 'The end date cannot be before the assignment started' },
++};
++
++export function registerCollectorAssignmentRoutes(app: FastifyInstance, verifier?: TokenVerifier, resolveUser?: UserResolver): void {
++  const auth = authMiddleware(verifier, resolveUser);
++
++  async function withMappedErrors<T>(reply: FastifyReply, correlationId: unknown, fn: () => Promise<T>) {
++    try {
++      return { ok: true as const, data: await fn(), correlationId, version: SYSTEM_VERSION };
++    } catch (error) {
++      if (error instanceof Error) {
++        const mapped = ASSIGNMENT_ERROR_STATUS[error.message];
++        if (mapped) return reply.code(mapped.status).send({ ok: false, error: { code: mapped.code, message: mapped.message }, correlationId, version: SYSTEM_VERSION });
++      }
++      throw error;
++    }
++  }
++
++  app.get<{ Querystring: WorkspaceQuery }>('/api/v1/collector-assignments', {
++    preHandler: [
++      auth,
++      requireRoles(['admin', 'manager']),
++      requireBranchScope((request) => (request.query as WorkspaceQuery | undefined)?.branchId ?? request.actor?.branchId ?? undefined),
++    ],
++    schema: { querystring: { type: 'object', additionalProperties: false, properties: { branchId: { type: 'string', minLength: 1 } } } },
++  }, async (request, reply) => {
++    const actor = request.actor!;
++    const branchId = actor.role === 'admin' ? request.query.branchId : actor.branchId;
++    if (!branchId) return reply.code(400).send({ ok: false, error: { code: 'BRANCH_REQUIRED', message: 'A branch is required to view assignments' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
++    return withMappedErrors(reply, request.headers['x-correlation-id'], () => getAssignmentWorkspace({ branchId, actorRole: actor.role, actorBranchId: actor.branchId }));
++  });
++
++  app.post<{ Body: CreateBody }>('/api/v1/collector-assignments', {
++    preHandler: [auth, requireRoles(['admin', 'manager']), requireBranchScope((request) => (request.body as CreateBody | undefined)?.branchId)],
++    schema: {
++      body: {
++        type: 'object',
++        required: ['branchId', 'officerId', 'clientId', 'routeCode'],
++        additionalProperties: false,
++        properties: {
++          branchId: { type: 'string', minLength: 1 },
++          officerId: { type: 'string', minLength: 1 },
++          clientId: { type: 'string', minLength: 1 },
++          routeCode: { type: 'string', minLength: 1, maxLength: 80 },
++          effectiveFrom: { type: 'string', format: 'date' },
++        },
++      },
++    },
++  }, async (request, reply) => {
++    const actor = request.actor!;
++    return withMappedErrors(reply, request.headers['x-correlation-id'], () => createAssignment({
++      ...request.body,
++      actorUserId: actor.userId,
++      actorRole: actor.role,
++      actorBranchId: actor.branchId,
++      correlationId: String(request.headers['x-correlation-id']),
++    }));
++  });
++
++  app.patch<{ Params: IdParams; Body: RouteCodeBody }>('/api/v1/collector-assignments/:id', {
++    preHandler: [auth, requireRoles(['admin', 'manager'])],
++    schema: {
++      params: { type: 'object', required: ['id'], additionalProperties: false, properties: { id: { type: 'string', minLength: 1 } } },
++      body: { type: 'object', required: ['routeCode'], additionalProperties: false, properties: { routeCode: { type: 'string', minLength: 1, maxLength: 80 } } },
++    },
++  }, async (request, reply) => {
++    const actor = request.actor!;
++    return withMappedErrors(reply, request.headers['x-correlation-id'], async () => {
++      await updateRouteCode({ id: request.params.id, routeCode: request.body.routeCode, actorUserId: actor.userId, actorRole: actor.role, actorBranchId: actor.branchId, correlationId: String(request.headers['x-correlation-id']) });
++      return { id: request.params.id, updated: true };
++    });
++  });
++
++  app.delete<{ Params: IdParams; Body: EndBody }>('/api/v1/collector-assignments/:id', {
++    preHandler: [auth, requireRoles(['admin', 'manager'])],
++    schema: {
++      params: { type: 'object', required: ['id'], additionalProperties: false, properties: { id: { type: 'string', minLength: 1 } } },
++      body: { type: 'object', additionalProperties: false, properties: { effectiveTo: { type: 'string', format: 'date' } } },
++    },
++  }, async (request, reply) => {
++    const actor = request.actor!;
++    return withMappedErrors(reply, request.headers['x-correlation-id'], async () => {
++      await endAssignment({ id: request.params.id, effectiveTo: request.body?.effectiveTo, actorUserId: actor.userId, actorRole: actor.role, actorBranchId: actor.branchId, correlationId: String(request.headers['x-correlation-id']) });
++      return { id: request.params.id, unassigned: true };
++    });
++  });
++}
+diff --git a/server/src/scripts/seed-demo-domain-data.ts b/server/src/scripts/seed-demo-domain-data.ts
+index 4eebbd0..6e94561 100644
+--- a/server/src/scripts/seed-demo-domain-data.ts
++++ b/server/src/scripts/seed-demo-domain-data.ts
+@@ -100,6 +100,12 @@ async function loadProductIds(codes: ProductCode[]): Promise<Record<ProductCode,
+   return map;
+ }
+ 
++function dateOffset(days: number): string {
++  const date = new Date();
++  date.setUTCDate(date.getUTCDate() + days);
++  return date.toISOString().slice(0, 10);
++}
++
+ type Scenario = 'pending_approval' | 'active' | 'overdue' | 'fully_paid';
+ 
+ interface ClientSpec {
+@@ -230,6 +236,81 @@ async function main(): Promise<void> {
+     }
+   }
+ 
++  console.log('--- 5. Edge-case fixtures for collector-assignment QA ---');
++  console.log('  (unassigned client, active loan with a lapsed assignment, duplicate-active-assignment data-quality case)');
++
++  // 5a. A client with no collector assignment at all, ever — the plain
++  // "nobody has claimed this client yet" gap that the manager dashboard's
++  // unassigned-clients list needs to surface.
++  const unassignedClient = await createPortalClient(officer, { branchId, externalRef: `DEMO-${DEMO_RUN_TAG}-005`, displayName: 'Emma Auma' });
++  console.log(`  Emma Auma (no loan, never assigned) -> ${unassignedClient.id}`);
++
++  // 5b. A client with a genuinely active loan whose only collector
++  // assignment expired 30 days ago — the "used to have a collector, quietly
++  // doesn't anymore" gap, which is easy to miss because the loan itself
++  // looks perfectly healthy.
++  const lapsedClient = await createPortalClient(officer, { branchId, externalRef: `DEMO-${DEMO_RUN_TAG}-006`, displayName: 'James Okwir' });
++  const lapsedApplication = await createLoanApplication(officer, { clientId: lapsedClient.id, productId: productIds.PERSONAL, requestedAmount: 500_000 });
++  await submitLoanApplication(officer, lapsedApplication.id);
++  await reviewKyc(manager, lapsedApplication.id, { status: 'verified', verificationMethod: 'National ID', evidenceNotes: 'ID and address verified during seed run' });
++  await assessApplicationRisk(manager, lapsedApplication.id, { score: 70, riskGrade: 'B', status: 'approved', policyVersion: 'seed-v1', rationale: 'Acceptable risk profile for stress-test seed data' });
++  const lapsedDecision = await decideApplication(manager, lapsedApplication.id, { decision: 'approve', reason: 'Approved via seed-demo-domain-data script' });
++  await disburseLoan(officer, lapsedDecision.loanId!, { disbursementReference: `SEED-DISB-${DEMO_RUN_TAG}-005`, idempotencyKey: randomUUID() });
++  await transitionLoan(officer, lapsedDecision.loanId!, 'active', 'Loan activated after disbursement');
++  const collectorSnapshot = await loadUserSeedSnapshot('collector@upfund.test');
++  await seedDatabase({
++    approved: true,
++    branches: [{ code: BRANCH_CODE, name: 'Main Branch' }],
++    users: [{
++      id: collectorSnapshot.id,
++      firebaseUid: collectorSnapshot.firebaseUid,
++      email: collectorSnapshot.email,
++      displayName: collectorSnapshot.displayName,
++      role: collectorSnapshot.roleCode as UserRole,
++      branchCode: BRANCH_CODE,
++      status: collectorSnapshot.status,
++    }],
++    loanProducts: [],
++    collectorAssignments: [{
++      officerFirebaseUid: collector.firebaseUid,
++      clientId: lapsedClient.id,
++      branchCode: BRANCH_CODE,
++      routeCode: `SEED-ROUTE-${DEMO_RUN_TAG}-LAPSED`,
++      effectiveFrom: dateOffset(-60),
++      effectiveTo: dateOffset(-30),
++    }],
++  }, withTransaction, undefined);
++  console.log(`  James Okwir (active loan, collector assignment lapsed 30 days ago) -> ${lapsedClient.id}`);
++
++  // 5c. A duplicate-active-assignment data-quality gap: Sarah Amuge already
++  // got one active row in step 3 (route SEED-ROUTE-${DEMO_RUN_TAG}); add a
++  // second active row for the *same officer* under a different route code,
++  // reproducing the exact shape of the bug that listAssignedLoans' missing
++  // DISTINCT used to duplicate loan options for.
++  const duplicateAssignmentClientId = clientIds[`DEMO-${DEMO_RUN_TAG}-003`];
++  await seedDatabase({
++    approved: true,
++    branches: [{ code: BRANCH_CODE, name: 'Main Branch' }],
++    users: [{
++      id: officerSnapshot.id,
++      firebaseUid: officerSnapshot.firebaseUid,
++      email: officerSnapshot.email,
++      displayName: officerSnapshot.displayName,
++      role: officerSnapshot.roleCode as UserRole,
++      branchCode: BRANCH_CODE,
++      status: officerSnapshot.status,
++    }],
++    loanProducts: [],
++    collectorAssignments: [{
++      officerFirebaseUid: officer.firebaseUid,
++      clientId: duplicateAssignmentClientId,
++      branchCode: BRANCH_CODE,
++      routeCode: `SEED-ROUTE-${DEMO_RUN_TAG}-DUP`,
++      effectiveFrom: new Date().toISOString().slice(0, 10),
++    }],
++  }, withTransaction, undefined);
++  console.log(`  Sarah Amuge (${duplicateAssignmentClientId}) now has two active assignment rows for the same officer — DISTINCT regression fixture`);
++
+   console.log('Done.');
+   await pool.end();
+   process.exit(0);
+diff --git a/server/src/services/collector-assignments.ts b/server/src/services/collector-assignments.ts
+new file mode 100644
+index 0000000..df2d355
+--- /dev/null
++++ b/server/src/services/collector-assignments.ts
+@@ -0,0 +1,264 @@
++import { pool, withTransaction, insertAuditEvent, type DbClient } from '../db.js';
++import type { Actor } from '../../../shared/contracts.js';
++
++/**
++ * Collector-assignment write path. Previously `collector_assignments` was
++ * only ever written by seed scripts direct to Postgres — no product surface
++ * let a manager assign a collector to a client, which is why field
++ * collection and payment posting (payment-posting.ts's COLLECTOR_NOT_ASSIGNED
++ * check) were unreachable without manual SQL. This service is the first
++ * write path for that table.
++ *
++ * Assignments are never hard-deleted: "unassigning" sets effective_to, so
++ * the audit trail of who collected for whom, and when, survives — same
++ * principle as rule 4 in HANDOFF_5 ("hidden means not rendered; server
++ * stays the authority").
++ */
++
++export interface AssignmentRow {
++  id: string;
++  officerId: string;
++  officerName: string;
++  clientId: string;
++  clientName: string;
++  branchId: string;
++  routeCode: string;
++  effectiveFrom: string;
++  effectiveTo: string | null;
++}
++
++export interface UnassignedClient { clientId: string; clientName: string; branchId: string; }
++export interface BranchCollector { officerId: string; officerName: string; role: 'collector' | 'officer'; branchId: string; }
++
++export interface AssignmentWorkspace {
++  assignments: AssignmentRow[];
++  unassignedClients: UnassignedClient[];
++  collectors: BranchCollector[];
++}
++
++function assertManagerRole(actorRole: string): void {
++  if (actorRole !== 'admin' && actorRole !== 'manager') throw new Error('ASSIGNMENT_ROLE_DENIED');
++}
++
++/** Admin acts cross-branch; every other role is pinned to its own branch — mirrors requireBranchScope's logic. */
++function assertBranchAccess(actor: Pick<Actor, 'role' | 'branchId'>, branchId: string): void {
++  if (actor.role === 'admin') return;
++  if (!actor.branchId || actor.branchId !== branchId) throw new Error('ASSIGNMENT_BRANCH_DENIED');
++}
++
++export async function getAssignmentWorkspace(input: { branchId: string; actorRole: string; actorBranchId: string | null }): Promise<AssignmentWorkspace> {
++  assertManagerRole(input.actorRole);
++  assertBranchAccess({ role: input.actorRole as Actor['role'], branchId: input.actorBranchId }, input.branchId);
++
++  const [assignments, unassigned, collectors] = await Promise.all([
++    pool.query<{ id: string; officer_id: string; officer_name: string; client_id: string; client_name: string; branch_id: string; route_code: string; effective_from: string; effective_to: string | null }>(
++      `SELECT ca.id, ca.officer_id, o.display_name AS officer_name, ca.client_id, c.display_name AS client_name,
++              ca.branch_id, ca.route_code, ca.effective_from, ca.effective_to
++         FROM collector_assignments ca
++         JOIN users o ON o.id = ca.officer_id
++         JOIN clients c ON c.id = ca.client_id
++        WHERE ca.branch_id = $1
++          AND ca.effective_from <= CURRENT_DATE
++          AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE)
++        ORDER BY o.display_name, c.display_name`,
++      [input.branchId],
++    ),
++    // A client with no row in collector_assignments, or only a lapsed one, is
++    // "unassigned" for operational purposes — this is exactly the gap the
++    // manager needs to see and close.
++    pool.query<{ id: string; display_name: string; branch_id: string }>(
++      `SELECT c.id, c.display_name, c.branch_id
++         FROM clients c
++        WHERE c.branch_id = $1
++          AND NOT EXISTS (
++            SELECT 1 FROM collector_assignments ca
++             WHERE ca.client_id = c.id
++               AND ca.effective_from <= CURRENT_DATE
++               AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE)
++          )
++        ORDER BY c.display_name`,
++      [input.branchId],
++    ),
++    pool.query<{ id: string; display_name: string; role_code: string }>(
++      `SELECT u.id, u.display_name, r.code AS role_code
++         FROM users u
++         JOIN roles r ON r.id = u.role_id
++        WHERE u.branch_id = $1 AND u.status = 'active' AND r.code IN ('collector', 'officer')
++        ORDER BY u.display_name`,
++      [input.branchId],
++    ),
++  ]);
++
++  return {
++    assignments: assignments.rows.map((row) => ({
++      id: row.id,
++      officerId: row.officer_id,
++      officerName: row.officer_name,
++      clientId: row.client_id,
++      clientName: row.client_name,
++      branchId: row.branch_id,
++      routeCode: row.route_code,
++      effectiveFrom: row.effective_from,
++      effectiveTo: row.effective_to,
++    })),
++    unassignedClients: unassigned.rows.map((row) => ({ clientId: row.id, clientName: row.display_name, branchId: row.branch_id })),
++    collectors: collectors.rows.map((row) => ({ officerId: row.id, officerName: row.display_name, role: row.role_code as 'collector' | 'officer', branchId: input.branchId })),
++  };
++}
++
++export interface CreateAssignmentInput {
++  branchId: string;
++  officerId: string;
++  clientId: string;
++  routeCode: string;
++  effectiveFrom?: string;
++  actorUserId: string;
++  actorRole: string;
++  actorBranchId: string | null;
++  correlationId: string;
++}
++
++export async function createAssignment(input: CreateAssignmentInput): Promise<AssignmentRow> {
++  assertManagerRole(input.actorRole);
++  assertBranchAccess({ role: input.actorRole as Actor['role'], branchId: input.actorBranchId }, input.branchId);
++  const effectiveFrom = input.effectiveFrom ?? new Date().toISOString().slice(0, 10);
++
++  return withTransaction(async (client: DbClient) => {
++    const officer = await client.query<{ id: string; display_name: string; branch_id: string; role_code: string }>(
++      `SELECT u.id, u.display_name, u.branch_id, r.code AS role_code
++         FROM users u JOIN roles r ON r.id = u.role_id
++        WHERE u.id = $1 AND u.status = 'active'
++        FOR UPDATE`,
++      [input.officerId],
++    );
++    if (!officer.rowCount) throw new Error('OFFICER_NOT_FOUND');
++    if (!['collector', 'officer'].includes(officer.rows[0].role_code)) throw new Error('OFFICER_ROLE_INVALID');
++    if (officer.rows[0].branch_id !== input.branchId) throw new Error('OFFICER_BRANCH_MISMATCH');
++
++    const targetClient = await client.query<{ id: string; display_name: string; branch_id: string }>(
++      `SELECT id, display_name, branch_id FROM clients WHERE id = $1 FOR UPDATE`,
++      [input.clientId],
++    );
++    if (!targetClient.rowCount) throw new Error('CLIENT_NOT_FOUND');
++    if (targetClient.rows[0].branch_id !== input.branchId) throw new Error('CLIENT_BRANCH_MISMATCH');
++
++    // A client should have exactly one active collector at a time. Rather than
++    // rely on the caller to unassign first (easy to forget, and the previous
++    // total absence of this endpoint meant nobody had ever had to remember),
++    // end-date any currently-active assignment for this client in the same
++    // transaction as creating the new one.
++    const previous = await client.query<{ id: string }>(
++      `SELECT id FROM collector_assignments
++        WHERE client_id = $1
++          AND effective_from <= CURRENT_DATE
++          AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
++        FOR UPDATE`,
++      [input.clientId],
++    );
++    for (const row of previous.rows) {
++      // effective_to must be >= effective_from (DB CHECK constraint). Normally
++      // that's effectiveFrom - 1 day, but a same-day reassignment (old row's
++      // own effective_from is also today) would compute effectiveFrom - 1 as
++      // being before the old row started — clamp to the old row's own start
++      // date instead, so it's recorded as active for that one day rather
++      // than violating the constraint.
++      await client.query(
++        `UPDATE collector_assignments
++            SET effective_to = GREATEST(effective_from, ($1::date - INTERVAL '1 day')::date)
++          WHERE id = $2`,
++        [effectiveFrom, row.id],
++      );
++    }
++
++    const inserted = await client.query<{ id: string; effective_from: string; effective_to: string | null }>(
++      `INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code, effective_from)
++       VALUES ($1, $2, $3, $4, $5::date)
++       RETURNING id, effective_from, effective_to`,
++      [input.officerId, input.clientId, input.branchId, input.routeCode, effectiveFrom],
++    );
++    const row = inserted.rows[0];
++
++    await insertAuditEvent(client, {
++      actorUserId: input.actorUserId,
++      action: previous.rowCount ? 'collector_assignment.reassigned' : 'collector_assignment.created',
++      entityType: 'collector_assignment',
++      entityId: row.id,
++      branchId: input.branchId,
++      correlationId: input.correlationId,
++      metadata: { officerId: input.officerId, clientId: input.clientId, routeCode: input.routeCode, previousAssignmentIds: previous.rows.map((p) => p.id) },
++    });
++
++    return {
++      id: row.id,
++      officerId: input.officerId,
++      officerName: officer.rows[0].display_name,
++      clientId: input.clientId,
++      clientName: targetClient.rows[0].display_name,
++      branchId: input.branchId,
++      routeCode: input.routeCode,
++      effectiveFrom: row.effective_from,
++      effectiveTo: row.effective_to,
++    };
++  });
++}
++
++async function loadAssignmentForWrite(client: DbClient, id: string): Promise<{ id: string; branchId: string; effectiveFrom: string }> {
++  const result = await client.query<{ id: string; branch_id: string; effective_from: string }>(
++    `SELECT id, branch_id, effective_from FROM collector_assignments WHERE id = $1 FOR UPDATE`,
++    [id],
++  );
++  if (!result.rowCount) throw new Error('ASSIGNMENT_NOT_FOUND');
++  return { id: result.rows[0].id, branchId: result.rows[0].branch_id, effectiveFrom: result.rows[0].effective_from };
++}
++
++export interface EndAssignmentInput { id: string; effectiveTo?: string; actorUserId: string; actorRole: string; actorBranchId: string | null; correlationId: string; }
++
++export async function endAssignment(input: EndAssignmentInput): Promise<void> {
++  assertManagerRole(input.actorRole);
++  await withTransaction(async (client) => {
++    const assignment = await loadAssignmentForWrite(client, input.id);
++    assertBranchAccess({ role: input.actorRole as Actor['role'], branchId: input.actorBranchId }, assignment.branchId);
++    if (input.effectiveTo && input.effectiveTo < assignment.effectiveFrom) throw new Error('ASSIGNMENT_END_DATE_BEFORE_START');
++    // Same convention as createAssignment's auto end-dating: default to
++    // "no longer active as of today" (yesterday), clamped up to the
++    // assignment's own start date so a same-day unassign doesn't violate
++    // the effective_to >= effective_from constraint.
++    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
++    const effectiveTo = input.effectiveTo ?? (assignment.effectiveFrom > yesterday ? assignment.effectiveFrom : yesterday);
++    const updated = await client.query(
++      `UPDATE collector_assignments SET effective_to = $1::date
++        WHERE id = $2 AND effective_from <= $1::date`,
++      [effectiveTo, assignment.id],
++    );
++    if (!updated.rowCount) throw new Error('ASSIGNMENT_END_DATE_BEFORE_START');
++    await insertAuditEvent(client, {
++      actorUserId: input.actorUserId,
++      action: 'collector_assignment.ended',
++      entityType: 'collector_assignment',
++      entityId: assignment.id,
++      branchId: assignment.branchId,
++      correlationId: input.correlationId,
++      metadata: { effectiveTo },
++    });
++  });
++}
++
++export interface UpdateRouteCodeInput { id: string; routeCode: string; actorUserId: string; actorRole: string; actorBranchId: string | null; correlationId: string; }
++
++export async function updateRouteCode(input: UpdateRouteCodeInput): Promise<void> {
++  assertManagerRole(input.actorRole);
++  await withTransaction(async (client) => {
++    const assignment = await loadAssignmentForWrite(client, input.id);
++    assertBranchAccess({ role: input.actorRole as Actor['role'], branchId: input.actorBranchId }, assignment.branchId);
++    await client.query(`UPDATE collector_assignments SET route_code = $1 WHERE id = $2`, [input.routeCode, assignment.id]);
++    await insertAuditEvent(client, {
++      actorUserId: input.actorUserId,
++      action: 'collector_assignment.route_code_updated',
++      entityType: 'collector_assignment',
++      entityId: assignment.id,
++      branchId: assignment.branchId,
++      correlationId: input.correlationId,
++      metadata: { routeCode: input.routeCode },
++    });
++  });
++}
+diff --git a/server/src/services/collector-reporting.ts b/server/src/services/collector-reporting.ts
+index e4989b4..9f5555b 100644
+--- a/server/src/services/collector-reporting.ts
++++ b/server/src/services/collector-reporting.ts
+@@ -315,16 +315,29 @@ export async function getCollectorReportingSnapshot(input: CollectorReportingQue
+ 
+ export interface AssignedLoanOption { loanId: string; clientId: string; clientName: string; outstandingPrincipal: number; routeCode: string; }
+ export async function listAssignedLoans(input: { branchId: string; officerId: string }): Promise<AssignedLoanOption[]> {
++  // A client can (briefly, or due to a data-entry duplicate) have more than
++  // one active collector_assignments row for the same officer/branch — e.g.
++  // a route correction inserted a second row before the first was end-dated.
++  // Every other query in this file that joins from collector_assignments
++  // dedupes via `DISTINCT ON (ca.client_id)` first (see readSchedules,
++  // readOverdueWatchlist, readOfflineQueue above); this one joined straight
++  // from collector_assignments and so surfaced one duplicate loan option per
++  // extra assignment row. Apply the same active_assignments CTE pattern.
+   const result = await pool.query<{ loan_id: string; client_id: string; client_name: string; outstanding_principal: string; route_code: string }>(
+-    `SELECT l.id AS loan_id, c.id AS client_id, c.display_name AS client_name,
+-            l.outstanding_principal, ca.route_code
+-       FROM collector_assignments ca
+-       JOIN clients c ON c.id = ca.client_id
+-       JOIN loans l ON l.client_id = c.id AND l.branch_id = ca.branch_id
+-      WHERE ca.branch_id = $1 AND ca.officer_id = $2
+-        AND ca.effective_from <= CURRENT_DATE
+-        AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE)
+-        AND l.status IN ('approved', 'active', 'overdue')
++    `WITH active_assignments AS (
++       SELECT DISTINCT ON (ca.client_id) ca.client_id, ca.branch_id, ca.route_code
++         FROM collector_assignments ca
++        WHERE ca.branch_id = $1 AND ca.officer_id = $2
++          AND ca.effective_from <= CURRENT_DATE
++          AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE)
++        ORDER BY ca.client_id, ca.effective_from DESC
++     )
++     SELECT l.id AS loan_id, c.id AS client_id, c.display_name AS client_name,
++            l.outstanding_principal, a.route_code
++       FROM active_assignments a
++       JOIN clients c ON c.id = a.client_id
++       JOIN loans l ON l.client_id = c.id AND l.branch_id = a.branch_id
++      WHERE l.status IN ('approved', 'active', 'overdue')
+       ORDER BY c.display_name, l.id`,
+     [input.branchId, input.officerId],
+   );
+diff --git a/tests/collector-assignments.integration.test.ts b/tests/collector-assignments.integration.test.ts
+new file mode 100644
+index 0000000..94ef70f
+--- /dev/null
++++ b/tests/collector-assignments.integration.test.ts
+@@ -0,0 +1,168 @@
++import { afterAll, beforeAll, describe, expect, it } from 'vitest';
++import { randomUUID } from 'node:crypto';
++import { pool } from '../server/src/db.js';
++import { createAssignment, endAssignment, updateRouteCode, getAssignmentWorkspace } from '../server/src/services/collector-assignments.js';
++import { listAssignedLoans } from '../server/src/services/collector-reporting.js';
++
++const databaseUrl = process.env.DATABASE_URL;
++const suite = databaseUrl ? describe : describe.skip;
++
++let branchId: string;
++let otherBranchId: string;
++let managerUserId: string;
++let collectorAId: string;
++let collectorBId: string;
++let clientId: string;
++let today: string;
++
++function dateOffset(days: number): string {
++  const date = new Date(`${today}T00:00:00.000Z`);
++  date.setUTCDate(date.getUTCDate() + days);
++  return date.toISOString().slice(0, 10);
++}
++
++async function createClientRow(branch: string, displayName: string): Promise<string> {
++  const id = randomUUID();
++  await pool.query(`INSERT INTO clients (id, branch_id, external_ref, display_name) VALUES ($1, $2, $3, $4)`, [id, branch, `assignment-client-${id}`, displayName]);
++  return id;
++}
++
++suite('Collector assignment write path', () => {
++  beforeAll(async () => {
++    today = new Date().toISOString().slice(0, 10);
++    const roles = await pool.query<{ code: string; id: string }>(`SELECT code, id FROM roles WHERE code IN ('manager', 'collector')`);
++    const roleId = (code: string) => roles.rows.find((r) => r.code === code)!.id;
++
++    const branch = await pool.query<{ id: string }>(`INSERT INTO branches (code, name) VALUES ($1, 'Assignment Branch') RETURNING id`, [`ASSIGN-${randomUUID().slice(0, 8)}`]);
++    const otherBranch = await pool.query<{ id: string }>(`INSERT INTO branches (code, name) VALUES ($1, 'Other Assignment Branch') RETURNING id`, [`ASSIGN-OTHER-${randomUUID().slice(0, 8)}`]);
++    branchId = branch.rows[0].id;
++    otherBranchId = otherBranch.rows[0].id;
++
++    managerUserId = randomUUID();
++    await pool.query(`INSERT INTO users (id, firebase_uid, email, display_name, role_id, branch_id) VALUES ($1, $2, $3, 'Assignment Manager', $4, $5)`, [managerUserId, `assign-mgr-${managerUserId}`, `assign-mgr-${managerUserId}@example.test`, roleId('manager'), branchId]);
++
++    collectorAId = randomUUID();
++    await pool.query(`INSERT INTO users (id, firebase_uid, email, display_name, role_id, branch_id) VALUES ($1, $2, $3, 'Collector A', $4, $5)`, [collectorAId, `assign-col-a-${collectorAId}`, `assign-col-a-${collectorAId}@example.test`, roleId('collector'), branchId]);
++    collectorBId = randomUUID();
++    await pool.query(`INSERT INTO users (id, firebase_uid, email, display_name, role_id, branch_id) VALUES ($1, $2, $3, 'Collector B', $4, $5)`, [collectorBId, `assign-col-b-${collectorBId}`, `assign-col-b-${collectorBId}@example.test`, roleId('collector'), branchId]);
++
++    clientId = await createClientRow(branchId, 'Assignment Client');
++  });
++
++  afterAll(async () => { await pool.end(); });
++
++  it('rejects a non-manager actor', async () => {
++    await expect(createAssignment({
++      branchId, officerId: collectorAId, clientId, routeCode: 'ROUTE-1',
++      actorUserId: managerUserId, actorRole: 'officer', actorBranchId: branchId, correlationId: randomUUID(),
++    })).rejects.toThrow('ASSIGNMENT_ROLE_DENIED');
++  });
++
++  it('rejects a manager acting outside their own branch', async () => {
++    await expect(createAssignment({
++      branchId: otherBranchId, officerId: collectorAId, clientId, routeCode: 'ROUTE-1',
++      actorUserId: managerUserId, actorRole: 'manager', actorBranchId: branchId, correlationId: randomUUID(),
++    })).rejects.toThrow('ASSIGNMENT_BRANCH_DENIED');
++  });
++
++  it('rejects assigning a client from a different branch', async () => {
++    const foreignClient = await createClientRow(otherBranchId, 'Foreign Client');
++    await expect(createAssignment({
++      branchId, officerId: collectorAId, clientId: foreignClient, routeCode: 'ROUTE-1',
++      actorUserId: managerUserId, actorRole: 'manager', actorBranchId: branchId, correlationId: randomUUID(),
++    })).rejects.toThrow('CLIENT_BRANCH_MISMATCH');
++  });
++
++  it('creates an assignment, writes an audit event, and end-dates a prior assignment on reassignment', async () => {
++    const correlationId = randomUUID();
++    const first = await createAssignment({
++      branchId, officerId: collectorAId, clientId, routeCode: 'ROUTE-1',
++      actorUserId: managerUserId, actorRole: 'manager', actorBranchId: branchId, correlationId,
++    });
++    expect(first.officerId).toBe(collectorAId);
++    expect(first.effectiveTo).toBeNull();
++
++    const auditAfterCreate = await pool.query(`SELECT action FROM audit_events WHERE entity_id = $1 ORDER BY created_at`, [first.id]);
++    expect(auditAfterCreate.rows.map((r) => r.action)).toContain('collector_assignment.created');
++
++    // Reassign the same client to a different collector — the first row
++    // must be end-dated, not deleted, and exactly one active row should remain.
++    const second = await createAssignment({
++      branchId, officerId: collectorBId, clientId, routeCode: 'ROUTE-2',
++      actorUserId: managerUserId, actorRole: 'manager', actorBranchId: branchId, correlationId: randomUUID(),
++    });
++    expect(second.officerId).toBe(collectorBId);
++
++    const rows = await pool.query<{ id: string; officer_id: string; effective_to: string | null }>(
++      `SELECT id, officer_id, effective_to FROM collector_assignments WHERE client_id = $1 ORDER BY effective_from`,
++      [clientId],
++    );
++    expect(rows.rows).toHaveLength(2);
++    expect(rows.rows[0].officer_id).toBe(collectorAId);
++    expect(rows.rows[0].effective_to).not.toBeNull(); // end-dated, still present for audit
++    expect(rows.rows[1].officer_id).toBe(collectorBId);
++    expect(rows.rows[1].effective_to).toBeNull();
++  });
++
++  it('lists the active assignment and excludes an already-assigned client from the unassigned list', async () => {
++    const workspace = await getAssignmentWorkspace({ branchId, actorRole: 'manager', actorBranchId: branchId });
++    expect(workspace.assignments.some((a) => a.clientId === clientId && a.officerId === collectorBId)).toBe(true);
++    expect(workspace.unassignedClients.some((c) => c.clientId === clientId)).toBe(false);
++    expect(workspace.collectors.map((c) => c.officerId)).toEqual(expect.arrayContaining([collectorAId, collectorBId]));
++  });
++
++  it('surfaces a client with no active assignment as unassigned', async () => {
++    const freshClient = await createClientRow(branchId, 'Fresh Unassigned Client');
++    const workspace = await getAssignmentWorkspace({ branchId, actorRole: 'manager', actorBranchId: branchId });
++    expect(workspace.unassignedClients.some((c) => c.clientId === freshClient)).toBe(true);
++  });
++
++  it('updates a route code without changing the officer', async () => {
++    const row = await pool.query<{ id: string }>(`SELECT id FROM collector_assignments WHERE client_id = $1 AND effective_to IS NULL`, [clientId]);
++    const id = row.rows[0].id;
++    await updateRouteCode({ id, routeCode: 'ROUTE-2-CORRECTED', actorUserId: managerUserId, actorRole: 'manager', actorBranchId: branchId, correlationId: randomUUID() });
++    const updated = await pool.query<{ route_code: string }>(`SELECT route_code FROM collector_assignments WHERE id = $1`, [id]);
++    expect(updated.rows[0].route_code).toBe('ROUTE-2-CORRECTED');
++  });
++
++  it('unassigns by end-dating rather than deleting the row, freeing the client up as unassigned', async () => {
++    // Use a client with an assignment that started in the past — a same-day
++    // assignment can only be end-dated down to its own start date (the
++    // effective_to >= effective_from constraint), so it would still read as
++    // "active today" regardless of the unassign call. Backdating the start
++    // date isolates the behavior this test is actually checking.
++    const pastClient = await createClientRow(branchId, 'Past Assignment Client');
++    const past = await pool.query<{ id: string }>(
++      `INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code, effective_from) VALUES ($1, $2, $3, 'ROUTE-PAST', $4) RETURNING id`,
++      [collectorAId, pastClient, branchId, dateOffset(-30)],
++    );
++    const id = past.rows[0].id;
++    await endAssignment({ id, actorUserId: managerUserId, actorRole: 'manager', actorBranchId: branchId, correlationId: randomUUID() });
++    const after = await pool.query<{ effective_to: string | null }>(`SELECT effective_to FROM collector_assignments WHERE id = $1`, [id]);
++    expect(after.rows[0].effective_to).not.toBeNull();
++    const workspace = await getAssignmentWorkspace({ branchId, actorRole: 'manager', actorBranchId: branchId });
++    expect(workspace.unassignedClients.some((c) => c.clientId === pastClient)).toBe(true);
++  });
++
++  it('regression: a duplicate active assignment row for one client no longer duplicates loan options (DISTINCT fix)', async () => {
++    // Simulate the pre-existing data-quality gap flagged in prior review:
++    // two active collector_assignments rows for the same officer/client
++    // (e.g. a route correction inserted before the old row was end-dated).
++    const dupClient = await createClientRow(branchId, 'Duplicate Assignment Client');
++    const productId = randomUUID();
++    const applicationId = randomUUID();
++    const loanId = randomUUID();
++    await pool.query(`INSERT INTO loan_products (id, code, name) VALUES ($1, $2, 'Assignment Test Product')`, [productId, `assign-product-${productId}`]);
++    await pool.query(`INSERT INTO loan_applications (id, client_id, product_id, branch_id, requested_amount, created_by, status, approved_at) VALUES ($1, $2, $3, $4, $5, $6, 'approved', now())`, [applicationId, dupClient, productId, branchId, 1000, managerUserId]);
++    await pool.query(`INSERT INTO loans (id, application_id, client_id, branch_id, principal_amount, outstanding_principal, status) VALUES ($1, $2, $3, $4, 1000, 1000, 'active')`, [loanId, applicationId, dupClient, branchId]);
++    await pool.query(
++      `INSERT INTO collector_assignments (officer_id, client_id, branch_id, route_code, effective_from)
++       VALUES ($1, $2, $3, 'ROUTE-DUP-1', $4), ($1, $2, $3, 'ROUTE-DUP-2', $4)`,
++      [collectorAId, dupClient, branchId, today],
++    );
++
++    const options = await listAssignedLoans({ branchId, officerId: collectorAId });
++    const matches = options.filter((option) => option.loanId === loanId);
++    expect(matches).toHaveLength(1);
++  });
++});

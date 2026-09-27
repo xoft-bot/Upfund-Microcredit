@@ -78,7 +78,7 @@ async function main(): Promise<void> {
   for (const spec of TEST_ACCOUNTS) {
     if (spec.role === 'client') continue;
     const firebaseUid = await getOrCreateFirebaseUser(auth, spec);
-    console.log(`  ${spec.email} -> ${firebaseUid}`);
+    console.log(`  Firebase account ready for role: ${spec.role}`);
     nonClientUsers.push({
       id: randomUUID(),
       firebaseUid,
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   console.log(`  Test client profile -> ${testClientId}`);
 
   const clientFirebaseUid = await getOrCreateFirebaseUser(auth, clientSpec);
-  console.log(`  ${clientSpec.email} -> ${clientFirebaseUid}`);
+  console.log('  Firebase account ready for role: client');
   const clientUserSeed: SeedInput = {
     approved: true,
     branches: [{ code: BRANCH_CODE, name: BRANCH_NAME }],

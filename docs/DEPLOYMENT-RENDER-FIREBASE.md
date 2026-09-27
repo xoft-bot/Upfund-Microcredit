@@ -9,10 +9,10 @@ the authoritative database.
 Run the checks locally:
 
 ```bash
-npm run build
-npm run lint
-npm test
-npm run db:check
+pnpm run build
+pnpm run lint
+pnpm test
+pnpm run db:check
 ```
 
 Review the files before committing. Keep credentials, `.env` files, approved
@@ -20,7 +20,7 @@ seed files, and user-provided attachments out of the commit:
 
 ```bash
 git status --short
-git add .env.example firebase.json package.json package-lock.json render.yaml client server shared tests docs
+git add .env.example firebase.json package.json pnpm-lock.yaml render.yaml client server shared tests docs
 git commit -m "prepare Render and Firebase deployment"
 git push origin main
 ```
@@ -34,8 +34,8 @@ in source files, and do not force-push.
 In Render, create a Web Service from the repository and deploy the `main`
 branch. The checked-in `render.yaml` expresses the service defaults:
 
-- Build command: `npm ci && npm run build:server`
-- Start command: `npm run start`
+- Build command: `corepack enable && corepack prepare pnpm@10.26.1 --activate && pnpm install --frozen-lockfile --prod=false && pnpm run build:server`
+- Start command: `pnpm run start`
 - Health check: `/health`
 - Runtime: Node.js
 
@@ -76,7 +76,7 @@ reviewed seed JSON is available:
 ```bash
 SEED_INPUT_FILE=/secure/path/approved-seed.json \
 ADMIN_FIREBASE_UID=<real-firebase-auth-uid> \
-npm run db:seed
+  pnpm run db:seed
 ```
 
 The seed command fails closed without approved input and does not create sample
@@ -87,7 +87,7 @@ idempotent defaults command. It creates or updates only the `MAIN` branch and
 the active UGX `STARTER`, `WORKING_CAPITAL`, and `EMERGENCY` loan products:
 
 ```bash
-npm run db:seed:defaults
+pnpm run db:seed:defaults
 ```
 
 ## 3. Configure and deploy Firebase Hosting

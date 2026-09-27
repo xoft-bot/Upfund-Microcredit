@@ -10,6 +10,7 @@ export function requireRoles(roles: UserRole[]) {
     }
     if (!roles.includes(request.actor.role)) {
       await reply.code(403).send({ ok: false, error: { code: 'FORBIDDEN', message: 'Insufficient role' }, version: SYSTEM_VERSION });
+      return;
     }
   };
 }
@@ -23,6 +24,7 @@ export function requirePermissions(...permissions: string[]) {
     const granted = request.user?.permissions ?? [];
     if (!permissions.some((permission) => granted.includes(permission))) {
       await reply.code(403).send({ ok: false, error: { code: 'PERMISSION_DENIED', message: 'Required permission is not assigned' }, version: SYSTEM_VERSION });
+      return;
     }
   };
 }
@@ -37,6 +39,7 @@ export function requireBranchScope(getBranchId: (request: FastifyRequest) => str
     }
     if (actor.role !== 'admin' && (!actor.branchId || !requestedBranch || actor.branchId !== requestedBranch)) {
       await reply.code(403).send({ ok: false, error: { code: 'BRANCH_SCOPE_DENIED', message: 'Branch scope denied' }, version: SYSTEM_VERSION });
+      return;
     }
   };
 }
@@ -51,6 +54,7 @@ export function requireClientScope(getClientId: (request: FastifyRequest) => str
     const clientId = getClientId(request);
     if (actor.role === 'client' && (!actor.clientId || !clientId || actor.clientId !== clientId)) {
       await reply.code(403).send({ ok: false, error: { code: 'CLIENT_SCOPE_DENIED', message: 'Client scope denied' }, version: SYSTEM_VERSION });
+      return;
     }
   };
 }

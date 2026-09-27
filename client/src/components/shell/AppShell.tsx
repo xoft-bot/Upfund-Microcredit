@@ -4,6 +4,7 @@ import type { AuthIdentity } from '../../services/firebase.js';
 import { useQueueCounts, type QueueCountsState } from '../../hooks/useQueueCounts.js';
 import { breadcrumbsFor, countFor, countsEnabled, hasBottomBar, hasSearch, isRole, navFor, type NavItem, type Role } from '../../config/navConfig.js';
 import { GlobalSearch } from './GlobalSearch.js';
+import { BranchSelector } from './BranchSelector.js';
 
 export interface ShellProps {
   identity: AuthIdentity;
@@ -13,6 +14,9 @@ export interface ShellProps {
   onSignOut: () => void;
   getToken: () => Promise<string>;
   versionLabel: string;
+  branches: ReadonlyArray<{ id: string; code: string; name: string }>;
+  selectedBranchId?: string;
+  onSelectBranch: (branchId: string) => void;
 }
 /** Passed to every route via <Outlet context>. Read it with useOutletContext<ShellOutletContext>(). */
 export type ShellOutletContext = QueueCountsState & { role: Role; countsEnabled: boolean; getToken: () => Promise<string>; permissions: readonly string[]; branchId: string | null; clientId: string | null };
@@ -24,7 +28,7 @@ function Badge({ item, counts }: { item: NavItem; counts: QueueCountsState['coun
   return <span className="nav-badge" aria-label={`${value} waiting`}>{value > 99 ? '99+' : value}</span>;
 }
 
-export function AppShell({ identity, email, backendLive, identityError, onSignOut, getToken, versionLabel }: ShellProps) {
+export function AppShell({ identity, email, backendLive, identityError, onSignOut, getToken, versionLabel, branches, selectedBranchId, onSelectBranch }: ShellProps) {
   const role: Role = isRole(identity.role) ? identity.role : 'client';
   const items = navFor(role);
   const enabled = countsEnabled(role);
@@ -44,6 +48,7 @@ export function AppShell({ identity, email, backendLive, identityError, onSignOu
           <span /><span /><span />
         </button>
         <Link className="topbar-brand" to="/">Upfund</Link>
+        <BranchSelector branches={branches} selectedBranchId={selectedBranchId} onSelect={onSelectBranch} />
         {hasSearch(role) && <GlobalSearch role={role} getToken={getToken} />}
         <div className="topbar-user">
           <span className="topbar-who">{email ?? identity.uid}</span>

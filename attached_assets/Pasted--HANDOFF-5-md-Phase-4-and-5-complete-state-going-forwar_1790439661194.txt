@@ -1,0 +1,54 @@
+# HANDOFF_5.md: Phase 4 and 5 complete, state going forward
+
+Companion to `HANDOFF.md`, `HANDOFF_2.md`, `HANDOFF_3.md`, `HANDOFF_4.md` (old-portal removal), `FRONTEND_SPEC.md` v1.1.
+Repo `xoft-bot/Upfund-Microcredit`, Replit workspace `Letsgrow-Microcredit`. Node >=20 <22.
+
+## 1. State (all merged to `main`, all deployed live)
+
+| PR | What shipped |
+|---|---|
+| #7 `remove/classic-portal` | Retired the old combined `PortalDashboard`; `/reports` now branches by role to `ManagerAnalyticsDashboard`, `AccountantAuditDashboard`, or the new `MarketingProductReach` |
+| #8 `phase4/collector-restyle` | `CollectorRouteView` and `FieldCollectionForm` rebuilt onto the shared `portal-card` design system (previously standalone `.field-card`/`.metric-grid`/`.queue-list` styles). Fixed a latent bug in the process: status badges were emitting unprefixed classes (`queued` instead of `status-queued`) so several statuses never had their color applied; added the four missing CSS rules (`status-posted`, `status-syncing`, `status-needs-review`, `status-pending-reconciliation`). `offlineQueue.ts` untouched, its tests unchanged and passing |
+| #9 `phase5/accountant-reconciliation` | New `AccountantReconciliationView.tsx` — same batch data as the manager dashboard, no action buttons. Also fixed a real gap in `ManagerVarianceDashboard.tsx`: Approve/Reject were rendered unconditionally with no check against who submitted the batch, so the "a submitter cannot approve their own batch" rule was enforced only server-side, with no UI warning before a manager hit that wall. Added `submittedById`/`currentUserId` and a guard that swaps the buttons for a note when they match |
+
+Confirmed via `git log` and the GitHub PR list: 9 closed PRs, 0 open, `main` fast-forwarded cleanly through all of them — no divergent history to untangle.
+
+## 2. Decisions made this round (flagging for anyone reviewing later)
+
+- **`CollectorReportingDashboard` was retired, not reused.** It was wired to `isOfficer` in the old `PortalDashboard`, not `isCollector` — despite the name. Neither role's spec'd nav has a slot for a full dashboard like it. It was unimported (not deleted) pending confirmation this was the right call; if someone decides its data belongs in the collector experience after all, it's still in the repo.
+- **The old portal's metrics strip (Clients/Applications/Active loans/Outstanding) was dropped, not migrated** — it read from `getPortalOverview()`, not `/queues/counts`, so per the "no client-side counting" rule it doesn't get a new home.
+- **Open item, not yet resolved:** `getReconciliationQueue` behaves like a queue of *open* batches only. If "accountant evidence" is meant to include already-decided batches for audit purposes (not just pending ones), that needs a broader endpoint — the accountant view built this phase only shows what the existing queue endpoint returns.
+
+## 3. Rules carried forward unchanged
+
+1. Never edit `payment-posting.ts`, `reconciliation-posting.ts`, `ledger.ts`, `schedule.ts`.
+2. Service worker: `/api/` and `/health` stay uncached. (Separately worth noting: the SW's own update lifecycle caused a real "why isn't my fix showing up" moment this round — see §4.)
+3. No client-side counting — counts only from `GET /api/v1/queues/counts`.
+4. Hidden means not rendered; server stays the authority.
+5. No new PAR definition in the UI without accounting sign-off.
+6. One phase per branch and PR, merge only when green.
+7. Offline queue tests must stay unchanged and passing.
+
+## 4. New workflow note this round
+
+**A deploy landing doesn't mean an already-open tab shows it.** After `firebase-tools deploy` succeeds, a browser tab that was open before the deploy can keep running the previous service worker (`sw.js`) indefinitely — a hard refresh alone doesn't force it to hand control to the new version. Fix: DevTools → Application → Service Workers → Unregister, then fully close and reopen the tab. Worth adding to the QA checklist as a standard step after every deploy, not just when something looks wrong.
+
+Also from this round: `git mv` on a file that was never `git add`ed fails with `fatal: not under version control` — use a plain `mv` (or `git add` first) for brand-new untracked files.
+
+## 5. What's left
+
+- **Phase 6** — still out of scope until accounting writes a policy. Nothing to build here yet.
+- **PAR definition sign-off with accounting** — still open, unrelated to any phase above.
+- **Production DB role** (a superuser bypasses RLS) — still open.
+- **Optional `clients.created_by` migration** for officer-scoped client lists — still open.
+- **Risk assessment UI always sends `status: 'approved'`**, though the API also accepts `declined` — product decision still needed.
+- **The `CollectorReportingDashboard` decision** (§2) — still open if anyone wants to revisit it.
+- **The reconciliation-evidence scope question** (§2) — still open.
+
+With Phases 2 through 5 now complete and merged, the frontend rebuild described across `HANDOFF.md` through this document has no more phases queued except the accounting-gated Phase 6. Anything from here is either one of the open items above, or new work not yet defined.
+
+## 6. What to send back when resuming
+
+1. Confirmation the accountant reconciliation view and manager self-approval guard both check out live (post service-worker-clear).
+2. Any decision on the two open items in §2.
+3. Whatever accounting eventually decides for Phase 6, if that's what's being picked up.

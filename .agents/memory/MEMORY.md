@@ -11,4 +11,5 @@
 - [Render database diagnostics](render-database-diagnostics.md) — a started Render API can still fail PostgreSQL connectivity; public health responses intentionally redact driver details.
 - [GitHub API sync](github-api-sync.md) — API-published commits get new SHAs; fetch and align local main afterward to clear Git-tab divergence.
 - [Dependency override audits](dependency-override-audits.md) — verify resolved lockfile trees when a scanner ignores npm overrides and reports an uninstalled vulnerable version.
+- [Workspace security scanner scope](workspace-security-scanner-scope.md) — reconcile platform scan paths and versions against the active pnpm lockfile before changing dependencies or deleting backups.
 - [Supabase MCP concurrent migrations](supabase-mcp-concurrent-migrations.md) — applyMigration is transactional and rejects CREATE INDEX CONCURRENTLY.

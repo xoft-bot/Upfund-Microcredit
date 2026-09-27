@@ -39,7 +39,7 @@ import { loadProductTerms, buildRepaymentSchedule, persistRepaymentSchedule } fr
 import { postManualPayment } from '../services/payment-posting.js';
 import type { Actor, UserRole } from '../../../shared/contracts.js';
 
-const DEMO_RUN_TAG = '006';
+const DEMO_RUN_TAG = '007';
 const BRANCH_CODE = 'MAIN';
 
 type ProductCode = 'PERSONAL' | 'BUSINESS_GROWTH' | 'EMERGENCY';

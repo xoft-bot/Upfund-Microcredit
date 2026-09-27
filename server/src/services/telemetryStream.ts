@@ -1,4 +1,4 @@
-import { pool } from '../db.js';
+import { pool, summarizeDatabaseError } from '../db.js';
 import { SYSTEM_VERSION } from '../../../shared/version.js';
 
 export interface SystemHealth { version: typeof SYSTEM_VERSION; database: 'up' | 'down'; checkedAt: string; }
@@ -15,7 +15,10 @@ export function maskTelemetry(value: unknown): unknown {
 
 export async function getSystemHealth(): Promise<SystemHealth> {
   try { await pool.query('SELECT 1'); return { version: SYSTEM_VERSION, database: 'up', checkedAt: new Date().toISOString() }; }
-  catch { return { version: SYSTEM_VERSION, database: 'down', checkedAt: new Date().toISOString() }; }
+  catch (error) {
+    console.error(JSON.stringify({ event: 'system_health_check_failed', ...summarizeDatabaseError(error) }));
+    return { version: SYSTEM_VERSION, database: 'down', checkedAt: new Date().toISOString() };
+  }
 }
 
 export function getDatabasePoolStats(): PoolStats { return { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount, max: Number(process.env.DATABASE_POOL_MAX ?? 5) }; }

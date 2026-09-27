@@ -7,7 +7,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary.js';
 import { CollectorRouteView } from './components/field/CollectorRouteView.js';
 import { FieldCollectionForm } from './components/field/FieldCollectionForm.js';
 import { OfflineQueue, createPaymentSync } from './services/offlineQueue.js';
-import { ApiRequestError, getAssignedLoans, getCollectionQueue, getHealth, getReconciliationQueue, getSession, type AssignedLoanOption, type CollectionRecordResult, type ReconciliationQueueBatch } from './services/api.js';
+import { ApiRequestError, getAssignedLoans, getBranches, getCollectionQueue, getHealth, getReconciliationQueue, getSession, type AssignedLoanOption, type BranchOption, type CollectionRecordResult, type ReconciliationQueueBatch } from './services/api.js';
 import { getFirebaseIdToken, signOutFirebase, subscribeToFirebaseAuth, type AuthIdentity, type AuthSession } from './services/firebase.js';
 import { telemetry } from './services/telemetry.js';
 import type { FieldCollectionRecord, QueueMetrics, QueueSnapshot } from './types/field-ops.js';
@@ -39,7 +39,8 @@ function getDeviceId(): string {
     const created = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     window.localStorage.setItem(key, created);
     return created;
-  } catch {
+  } catch (error) {
+    telemetry.capture('device.id_storage_failed', { reason: error instanceof Error ? error.message : 'DEVICE_ID_STORAGE_FAILED' });
     return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 }
@@ -107,6 +108,8 @@ function App() {
   const [serverRecords, setServerRecords] = useState<FieldCollectionRecord[]>([]);
   const [reconciliationBatches, setReconciliationBatches] = useState<ReconciliationQueueBatch[]>([]);
   const [assignedLoans, setAssignedLoans] = useState<AssignedLoanOption[]>([]);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>(() => new URLSearchParams(window.location.search).get('branchId') ?? undefined);
 
   useEffect(() => {
     let active = true;
@@ -137,7 +140,11 @@ function App() {
     // (or the anonymous namespace on sign-out) before touching any queued
     // records — see OfflineQueue.bindUser for why this matters on shared
     // devices.
-    void queue.bindUser(session?.uid);
+    void queue.bindUser(session?.uid).catch((error: unknown) => {
+      if (!active) return;
+      setQueueError(error instanceof Error ? error.message : 'OFFLINE_STORAGE_UNAVAILABLE');
+      telemetry.capture('queue.bind_user_failed', { reason: error instanceof Error ? error.message : 'QUEUE_BIND_FAILED' });
+    });
     if (!session) { setIdentity(null); setIdentityError(''); setServerRecords([]); setReconciliationBatches([]); setAssignedLoans([]); return () => { active = false; }; }
     setIdentityLoading(true);
     void (async () => {
@@ -146,7 +153,15 @@ function App() {
         if (!token) throw new Error('AUTH_TOKEN_UNAVAILABLE');
         const profile = await getSession(token);
         const nextIdentity: AuthIdentity = { uid: session.uid, userId: profile.userId, collectorId: profile.userId, role: profile.role as AuthIdentity['role'], branchId: profile.branchId, clientId: profile.clientId, permissions: profile.permissions };
+        const availableBranches = await getBranches(token);
+        const nextSelectedBranchId = nextIdentity.role === 'admin'
+          ? selectedBranchId && availableBranches.some((branch) => branch.id === selectedBranchId)
+            ? selectedBranchId
+            : availableBranches[0]?.id
+          : nextIdentity.branchId ?? undefined;
         if (!active) return;
+        setBranches(availableBranches);
+        if (nextSelectedBranchId !== selectedBranchId) setSelectedBranchId(nextSelectedBranchId);
         setIdentity(nextIdentity);
         setIdentityError('');
         await queue.retry();
@@ -158,12 +173,10 @@ function App() {
         // skip these branch-scoped calls entirely instead of erroring —
         // an admin viewing no specific branch has nothing branch-scoped
         // to show, which isn't a failure.
-        const adminSelectedBranchId = nextIdentity.role === 'admin'
-          ? new URLSearchParams(window.location.search).get('branchId') ?? undefined
-          : undefined;
-        const canLoadBranchScoped = nextIdentity.role !== 'admin' || Boolean(adminSelectedBranchId);
+        const branchIdForRequests = nextIdentity.role === 'admin' ? nextSelectedBranchId : undefined;
+        const canLoadBranchScoped = nextIdentity.role !== 'admin' || Boolean(branchIdForRequests);
         if (COLLECTION_QUEUE_ROLES.includes(nextIdentity.role) && canLoadBranchScoped) {
-          const collections = await getCollectionQueue(token, { branchId: adminSelectedBranchId });
+          const collections = await getCollectionQueue(token, { branchId: branchIdForRequests });
           if (active) setServerRecords(collections.records.map(serverRecordToFieldRecord));
         } else if (active) setServerRecords([]);
         if (['collector', 'officer'].includes(nextIdentity.role)) {
@@ -171,11 +184,11 @@ function App() {
           if (active) setAssignedLoans(assigned.loans);
         } else if (active) setAssignedLoans([]);
         if (['admin', 'manager', 'accountant'].includes(nextIdentity.role) && canLoadBranchScoped) {
-          const reconciliations = await getReconciliationQueue(token, { branchId: adminSelectedBranchId });
+          const reconciliations = await getReconciliationQueue(token, { branchId: branchIdForRequests });
           if (active) setReconciliationBatches(reconciliations.batches);
         } else if (active) setReconciliationBatches([]);
-        if (active && nextIdentity.role === 'admin' && !adminSelectedBranchId) {
-          setIdentityError('Admin view: add ?branchId=<id> to the URL to see that branch\'s queues.');
+        if (active && nextIdentity.role === 'admin' && !nextSelectedBranchId) {
+          setIdentityError('No branches are available for this admin account.');
         }
       } catch (error) {
         if (active) {
@@ -193,7 +206,7 @@ function App() {
       }
     })();
     return () => { active = false; };
-  }, [queue, session]);
+  }, [queue, selectedBranchId, session]);
 
   useEffect(() => {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
@@ -220,10 +233,18 @@ function App() {
   const addRecord = (record: FieldCollectionRecord) => { setRecords((current) => [...current.filter((item) => item.localId !== record.localId), record]); setLastRecord(record); };
   const metrics = queueSnapshot.metrics ?? emptyMetrics;
   const collectorContextReady = Boolean(identity && ['collector', 'officer'].includes(identity.role) && identity.branchId);
-  const managerContext = identity && ['admin', 'manager'].includes(identity.role) ? identity : null;
+  const managerContext = identity && ['admin', 'manager'].includes(identity.role)
+    ? { ...identity, branchId: identity.role === 'admin' ? selectedBranchId ?? null : identity.branchId }
+    : null;
   const accountantContext = identity && identity.role === 'accountant' ? identity : null;
   const routeName = identity?.branchName ? `${identity.branchName} route` : 'Assigned collection route';
   const displayedRecords = [...serverRecords, ...records.filter((local) => !serverRecords.some((server) => server.localId === local.localId))];
+  const selectBranch = (branchId: string) => {
+    setSelectedBranchId(branchId);
+    const url = new URL(window.location.href);
+    if (branchId) url.searchParams.set('branchId', branchId); else url.searchParams.delete('branchId');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  };
 
   // Before sign-in (and while identity loads) keep the original header, without the shell.
   if (!identity) {
@@ -278,7 +299,7 @@ function App() {
   return (
     <BrowserRouter>
       <AppRoutes
-        shell={{ identity, email: session?.email ?? undefined, backendLive, identityError, onSignOut: () => void signOutFirebase(), getToken, versionLabel: `System version v${appVersion} (${gitSha})` }}
+        shell={{ identity, email: session?.email ?? undefined, backendLive, identityError, onSignOut: () => void signOutFirebase(), getToken, versionLabel: `System version v${appVersion} (${gitSha})`, branches, selectedBranchId, onSelectBranch: selectBranch }}
         collectorHome={collectorHome}
         reconciliation={reconciliation}
         accountantReconciliation={accountantReconciliation}

@@ -1,0 +1,44 @@
+# Task: Phase 2 — Branch & Portfolio Selection UI
+
+Repo: `xoft-bot/Upfund-Microcredit`, Replit workspace `Letsgrow-Microcredit`. Node >=20 <22.
+Companion docs already in the repo/history: `HANDOFF.md` through `HANDOFF_5.md`, `FRONTEND_SPEC.md` v1.1.
+
+## Before you touch anything
+
+1. Read `HANDOFF_5.md` in full. It documents the current state (Phases 2–5 of the frontend rebuild are merged) and rules that still apply:
+   - Never edit `payment-posting.ts`, `reconciliation-posting.ts`, `ledger.ts`, `schedule.ts`.
+   - Service worker: `/api/` and `/health` stay uncached.
+   - No client-side counting — counts only from `GET /api/v1/queues/counts`.
+   - Hidden means not rendered; server stays the authority (branch scoping must be enforced server-side, not just hidden in the UI).
+   - One phase = one branch = one PR, merge only when green.
+   - Offline queue tests (`tests/offline-queue.test.ts` and `offlineQueue.ts` itself) must stay unchanged and passing.
+   - After any `firebase-tools deploy`, an already-open tab can keep running the old service worker — unregister it in DevTools before QA-ing your own changes, or you'll debug a "fix" that isn't actually loaded.
+2. **A Phase 1 (collector-assignment endpoints + UI) was just merged.** Do not redo or conflict with it. It added: `server/src/services/collector-assignments.ts`, `server/src/routes/collectorAssignments.ts`, `client/src/components/field/AssignmentManager.tsx`, wiring in `client/src/routes.tsx` and `client/src/main.tsx` (a `managerContext`/`assignmentManager` prop), and a fix to `listAssignedLoans` in `collector-reporting.ts`. Pull latest `main` and confirm these exist before starting.
+3. **Trust nothing you didn't verify yourself.** This repo has a documented history of agent sessions claiming a fix was "done" when the diff showed no actual change, or claiming behavior that the code didn't have. Before you report anything as complete, you must have (a) run it, not just read it, and (b) show the command output, not just a summary.
+
+## The actual problem (verified against current code, not assumed)
+
+- `client/src/main.tsx`: an `admin` actor has `branchId: null` on their identity (admins are cross-branch by design). Today the *only* way an admin sees branch-scoped data is manually appending `?branchId=<uuid>` to the URL — there is a code comment saying exactly this. Every branch-scoped view (`AssignmentManager`, `ManagerVarianceDashboard`, the collections queue) inherits this gap for admin users.
+- **There is no `GET /api/v1/branches` endpoint anywhere in `server/src/routes/`.** Nothing lists branches today. You need to add one.
+- **The relevant data fetches in `main.tsx` run once, in a single `useEffect` at login**, keyed off the URL's `branchId` query param at that moment. They are not reactive to a later branch change. A real picker that lets someone switch branches mid-session requires making these fetches re-run when the selected branch changes — this is not just "add a `<select>`."
+
+## Scope for this phase
+
+1. **`GET /api/v1/branches`** (new route, follow the existing pattern in `server/src/routes/reconciliations.ts` — `authMiddleware` + `requireRoles` + the standard `{ ok, data, correlationId, version }` envelope). Admin gets every branch; every other role gets only their own `branch_id`'s row (so the same client code works for all roles without special-casing on the frontend).
+2. **A `BranchSelector` component** in the shell header (`client/src/components/shell/` — check `GlobalSearch.tsx` there for the existing shell-component conventions and CSS classes). Visible only when the fetched branch list has more than one entry (i.e., effectively admin-only today, but don't hardcode that — key it off list length so it degrades correctly if that ever changes).
+3. **Replace the URL-param hack with real React state** (`selectedBranchId` in `main.tsx`), but keep it reflected in the URL (`?branchId=`) so links stay shareable/bookmarkable — read the initial value from the URL, write back to it via `history.replaceState` or the router on change, don't add react-router as a new dependency if it's not already wired for this.
+4. **Make the branch-scoped fetches reactive.** Specifically: the collections-queue fetch, the reconciliation-queue fetch, and — from Phase 1 — `AssignmentManager`'s own internal fetch (it already re-fetches on `branchId` prop change via its `useCallback`/`useEffect`, so for that one you just need to confirm `managerContext.branchId` now reflects the picker instead of always being `null` for admin). For the other two, this likely means moving their fetch logic out of the one-time login `useEffect` into something keyed on `[identity, selectedBranchId]`.
+5. Do **not** touch the officer/collector/client-facing views — this phase is for roles that can act cross-branch (currently just `admin`; `manager` already has a fixed `branchId` and doesn't need a picker, but should still hit the new endpoint fine and just render nothing/a static label).
+
+## Acceptance criteria — do not report this done until all of these are true, with output shown
+
+1. `npx tsc -p tsconfig.json --noEmit` — zero errors.
+2. `npx eslint <every file you touched>` — zero errors (warnings you introduce should be zero too; don't disable a lint rule to make one go away, fix the actual issue).
+3. Full test suite passes with **zero regressions**: start local Postgres, run migrations, then `pnpm test -- --run`. The suite was at 188 passing tests (26 files) before this phase, including `tests/offline-queue.test.ts` — that count should only go up, never down, and the offline-queue file specifically must be byte-for-byte unchanged.
+4. `pnpm run build` succeeds.
+5. **Manual/integration verification with real data**, not just unit mocks: run `server/src/scripts/seed-test-accounts.ts` then `server/src/scripts/seed-demo-domain-data.ts` (bump `DEMO_RUN_TAG` if re-running against data that already exists) against a real Postgres instance, then either (a) write an integration test that logs in as admin, calls `GET /api/v1/branches`, and confirms it returns the seeded branch(es), or (b) if you can drive the actual UI, take a screenshot showing the admin picker populated and a subsequent branch-scoped view reloading data after switching.
+6. Add at least one new test file (matching the convention in `tests/collector-assignments.integration.test.ts` or `tests/phase1-read-api.test.ts`) covering: admin sees all branches, a non-admin role sees only their own branch, and a non-admin role can't spoof a different branch via a query param on the new endpoint (this is the exact vulnerability class `requireBranchScope` exists to prevent elsewhere in this codebase — check `server/src/middleware/authorization.ts` and reuse it, don't reinvent branch-scope checking).
+
+## Deliverable
+
+A single git diff/patch (or a PR against `main` if you have push access — one branch, one PR, per the handoff rules), plus the actual terminal output of steps 1–5 above pasted in full, not summarized. If something in this scope turns out to be wrong once you're in the code (e.g. a shell component convention that doesn't match what's described here), say so explicitly and explain the deviation — don't silently do something different and describe it as if it matches this spec.

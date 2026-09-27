@@ -56,6 +56,7 @@ export interface ReconciliationQueuePayment { paymentId: string; clientId: strin
 export interface ReconciliationQueueBatch { id: string; batchReference: string; branchId: string; collectionDate: string; expectedAmount: number; recordedAmount: number; submittedAmount: number; variance: number; status: string; decisionReason: string | null; reviewedAt: string | null; submittedBy: string; submittedByName: string | null; payments: ReconciliationQueuePayment[]; }
 export interface HealthResult { service: string; database: string; }
 export interface SessionProfile { userId: string; firebaseUid: string; role: string; branchId: string | null; clientId: string | null; permissions: string[]; }
+export interface BranchOption { id: string; code: string; name: string; }
 export interface PortalApplication { id: string; clientId: string; clientName: string; productName: string; branchId: string; requestedAmount: number; status: string; createdAt: string; submittedAt: string | null; }
 export interface ApplicationTimelineEntry { id: string; fromState: string | null; toState: string; actorUserId: string | null; reason: string | null; createdAt: string; }
 export interface PortalLoan { id: string; clientId: string; clientName: string; branchId: string; principalAmount: number; outstandingPrincipal: number; status: string; createdAt: string; }
@@ -101,6 +102,7 @@ async function request<T>(path: string, init: RequestInit = {}, apiBaseUrl?: str
 
 export function getHealth(): Promise<HealthResult> { return request<HealthResult>('/health'); }
 export function getSession(token: string): Promise<SessionProfile> { return request<SessionProfile>('/api/v1/session', { headers: { authorization: `Bearer ${token}` } }); }
+export function getBranches(token: string): Promise<BranchOption[]> { return request<BranchOption[]>('/api/v1/branches', bearer(token)); }
 export function postPayment(command: PaymentCommand, token?: string, apiBaseUrl = '', correlationId: string = crypto.randomUUID()): Promise<PaymentResult> { return request<PaymentResult>('/api/v1/payments', { method: 'POST', headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'x-correlation-id': correlationId }, body: JSON.stringify(command) }, apiBaseUrl); }
 export function postReconciliation(command: ReconciliationCommand, token: string, apiBaseUrl = ''): Promise<ReconciliationResult> { return request<ReconciliationResult>('/api/v1/reconciliations/post-batch', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(command) }, apiBaseUrl); }
 export function getCollectionQueue(token: string, options: { branchId?: string; collectorId?: string; apiBaseUrl?: string } = {}): Promise<{ records: CollectionRecordResult[] }> {
