@@ -100,6 +100,12 @@ async function loadProductIds(codes: ProductCode[]): Promise<Record<ProductCode,
   return map;
 }
 
+function dateOffset(days: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 type Scenario = 'pending_approval' | 'active' | 'overdue' | 'fully_paid';
 
 interface ClientSpec {
@@ -229,6 +235,81 @@ async function main(): Promise<void> {
       console.log(`  [${spec.displayName}] all installments paid — loan is now completed`);
     }
   }
+
+  console.log('--- 5. Edge-case fixtures for collector-assignment QA ---');
+  console.log('  (unassigned client, active loan with a lapsed assignment, duplicate-active-assignment data-quality case)');
+
+  // 5a. A client with no collector assignment at all, ever — the plain
+  // "nobody has claimed this client yet" gap that the manager dashboard's
+  // unassigned-clients list needs to surface.
+  const unassignedClient = await createPortalClient(officer, { branchId, externalRef: `DEMO-${DEMO_RUN_TAG}-005`, displayName: 'Emma Auma' });
+  console.log(`  Emma Auma (no loan, never assigned) -> ${unassignedClient.id}`);
+
+  // 5b. A client with a genuinely active loan whose only collector
+  // assignment expired 30 days ago — the "used to have a collector, quietly
+  // doesn't anymore" gap, which is easy to miss because the loan itself
+  // looks perfectly healthy.
+  const lapsedClient = await createPortalClient(officer, { branchId, externalRef: `DEMO-${DEMO_RUN_TAG}-006`, displayName: 'James Okwir' });
+  const lapsedApplication = await createLoanApplication(officer, { clientId: lapsedClient.id, productId: productIds.PERSONAL, requestedAmount: 500_000 });
+  await submitLoanApplication(officer, lapsedApplication.id);
+  await reviewKyc(manager, lapsedApplication.id, { status: 'verified', verificationMethod: 'National ID', evidenceNotes: 'ID and address verified during seed run' });
+  await assessApplicationRisk(manager, lapsedApplication.id, { score: 70, riskGrade: 'B', status: 'approved', policyVersion: 'seed-v1', rationale: 'Acceptable risk profile for stress-test seed data' });
+  const lapsedDecision = await decideApplication(manager, lapsedApplication.id, { decision: 'approve', reason: 'Approved via seed-demo-domain-data script' });
+  await disburseLoan(officer, lapsedDecision.loanId!, { disbursementReference: `SEED-DISB-${DEMO_RUN_TAG}-005`, idempotencyKey: randomUUID() });
+  await transitionLoan(officer, lapsedDecision.loanId!, 'active', 'Loan activated after disbursement');
+  const collectorSnapshot = await loadUserSeedSnapshot('collector@upfund.test');
+  await seedDatabase({
+    approved: true,
+    branches: [{ code: BRANCH_CODE, name: 'Main Branch' }],
+    users: [{
+      id: collectorSnapshot.id,
+      firebaseUid: collectorSnapshot.firebaseUid,
+      email: collectorSnapshot.email,
+      displayName: collectorSnapshot.displayName,
+      role: collectorSnapshot.roleCode as UserRole,
+      branchCode: BRANCH_CODE,
+      status: collectorSnapshot.status,
+    }],
+    loanProducts: [],
+    collectorAssignments: [{
+      officerFirebaseUid: collector.firebaseUid,
+      clientId: lapsedClient.id,
+      branchCode: BRANCH_CODE,
+      routeCode: `SEED-ROUTE-${DEMO_RUN_TAG}-LAPSED`,
+      effectiveFrom: dateOffset(-60),
+      effectiveTo: dateOffset(-30),
+    }],
+  }, withTransaction, undefined);
+  console.log(`  James Okwir (active loan, collector assignment lapsed 30 days ago) -> ${lapsedClient.id}`);
+
+  // 5c. A duplicate-active-assignment data-quality gap: Sarah Amuge already
+  // got one active row in step 3 (route SEED-ROUTE-${DEMO_RUN_TAG}); add a
+  // second active row for the *same officer* under a different route code,
+  // reproducing the exact shape of the bug that listAssignedLoans' missing
+  // DISTINCT used to duplicate loan options for.
+  const duplicateAssignmentClientId = clientIds[`DEMO-${DEMO_RUN_TAG}-003`];
+  await seedDatabase({
+    approved: true,
+    branches: [{ code: BRANCH_CODE, name: 'Main Branch' }],
+    users: [{
+      id: officerSnapshot.id,
+      firebaseUid: officerSnapshot.firebaseUid,
+      email: officerSnapshot.email,
+      displayName: officerSnapshot.displayName,
+      role: officerSnapshot.roleCode as UserRole,
+      branchCode: BRANCH_CODE,
+      status: officerSnapshot.status,
+    }],
+    loanProducts: [],
+    collectorAssignments: [{
+      officerFirebaseUid: officer.firebaseUid,
+      clientId: duplicateAssignmentClientId,
+      branchCode: BRANCH_CODE,
+      routeCode: `SEED-ROUTE-${DEMO_RUN_TAG}-DUP`,
+      effectiveFrom: new Date().toISOString().slice(0, 10),
+    }],
+  }, withTransaction, undefined);
+  console.log(`  Sarah Amuge (${duplicateAssignmentClientId}) now has two active assignment rows for the same officer — DISTINCT regression fixture`);
 
   console.log('Done.');
   await pool.end();

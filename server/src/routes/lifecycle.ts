@@ -28,7 +28,7 @@ export function registerLifecycleRoutes(app: FastifyInstance, verifier?: TokenVe
 
   const createApplication = async (request: { actor?: Parameters<typeof createLoanApplication>[0]; body: ApplicationBody; headers: Record<string, string | string[] | undefined> }) => ({
     ok: true,
-    data: await createLoanApplication(request.actor!, request.body),
+    data: await createLoanApplication(request.actor!, request.body, String(request.headers['x-correlation-id'])),
     correlationId: request.headers['x-correlation-id'],
     version: SYSTEM_VERSION,
   });
@@ -55,17 +55,17 @@ export function registerLifecycleRoutes(app: FastifyInstance, verifier?: TokenVe
   app.post<{ Params: { id: string } }>('/api/v1/loan-applications/:id/submit', {
     preHandler: [auth, requirePermissions('applications.submit')],
     schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } },
-  }, async (request) => ({ ok: true, data: await submitLoanApplication(request.actor!, request.params.id), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
+  }, async (request) => ({ ok: true, data: await submitLoanApplication(request.actor!, request.params.id, String(request.headers['x-correlation-id'])), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 
   app.post<{ Params: { id: string }; Body: KycBody }>('/api/v1/loan-applications/:id/kyc', {
     preHandler: [auth, requireRoles(['admin', 'manager', 'officer']), requirePermissions('kyc.review')],
     schema: { body: { type: 'object', required: ['status', 'verificationMethod', 'evidenceNotes'], additionalProperties: false, properties: { status: { type: 'string', enum: ['verified', 'rejected'] }, verificationMethod: { type: 'string', minLength: 1, maxLength: 100 }, evidenceNotes: { type: 'string', minLength: 1, maxLength: 2000 } } } },
-  }, async (request) => ({ ok: true, data: await reviewKyc(request.actor!, request.params.id, request.body), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
+  }, async (request) => ({ ok: true, data: await reviewKyc(request.actor!, request.params.id, request.body, String(request.headers['x-correlation-id'])), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 
   app.post<{ Params: { id: string }; Body: RiskBody }>('/api/v1/loan-applications/:id/risk', {
     preHandler: [auth, requireRoles(['admin', 'manager', 'officer']), requirePermissions('risk.assess')],
     schema: { body: { type: 'object', required: ['score', 'riskGrade', 'status', 'policyVersion', 'rationale'], additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, riskGrade: { type: 'string', minLength: 1, maxLength: 20 }, status: { type: 'string', enum: ['approved', 'declined'] }, policyVersion: { type: 'string', minLength: 1, maxLength: 64 }, rationale: { type: 'string', minLength: 1, maxLength: 2000 } } } },
-  }, async (request) => ({ ok: true, data: await assessApplicationRisk(request.actor!, request.params.id, request.body), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
+  }, async (request) => ({ ok: true, data: await assessApplicationRisk(request.actor!, request.params.id, request.body, String(request.headers['x-correlation-id'])), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 
   app.get<{ Params: { id: string } }>('/api/v1/loan-applications/:id/timeline', {
     preHandler: [auth, requirePermissions('portal.manager', 'portal.officer', 'portal.client')],
@@ -75,15 +75,15 @@ export function registerLifecycleRoutes(app: FastifyInstance, verifier?: TokenVe
   app.post<{ Params: { id: string }; Body: DecisionBody }>('/api/v1/loan-applications/:id/decision', {
     preHandler: [auth, requirePermissions('loans.approve')],
     schema: { body: { type: 'object', required: ['decision', 'reason'], additionalProperties: false, properties: { decision: { type: 'string', enum: ['approve', 'reject'] }, reason: { type: 'string', minLength: 1, maxLength: 500 } } } },
-  }, async (request) => ({ ok: true, data: await decideApplication(request.actor!, request.params.id, request.body), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
+  }, async (request) => ({ ok: true, data: await decideApplication(request.actor!, request.params.id, request.body, String(request.headers['x-correlation-id'])), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 
   app.post<{ Params: { id: string }; Body: DisbursementBody }>('/api/v1/loans/:id/disburse', {
     preHandler: [auth, requirePermissions('loans.disburse')],
     schema: { body: { type: 'object', required: ['disbursementReference', 'idempotencyKey'], additionalProperties: false, properties: { disbursementReference: { type: 'string', minLength: 1, maxLength: 128 }, idempotencyKey: { type: 'string', minLength: 8, maxLength: 128 } } } },
-  }, async (request) => ({ ok: true, data: await disburseLoan(request.actor!, request.params.id, request.body), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
+  }, async (request) => ({ ok: true, data: await disburseLoan(request.actor!, request.params.id, request.body, String(request.headers['x-correlation-id'])), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 
   app.post<{ Params: { id: string }; Body: TransitionBody }>('/api/v1/loans/:id/status', {
     preHandler: [auth, requireRoles(['admin', 'manager']), requirePermissions('loans.transition')],
     schema: { body: { type: 'object', required: ['status', 'reason'], additionalProperties: false, properties: { status: { type: 'string', enum: ['active', 'overdue', 'defaulted', 'written_off', 'completed'] }, reason: { type: 'string', minLength: 1, maxLength: 500 } } } },
-  }, async (request) => ({ ok: true, data: await transitionLoan(request.actor!, request.params.id, request.body.status, request.body.reason), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
+  }, async (request) => ({ ok: true, data: await transitionLoan(request.actor!, request.params.id, request.body.status, request.body.reason, String(request.headers['x-correlation-id'])), correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION }));
 }

@@ -315,16 +315,29 @@ export async function getCollectorReportingSnapshot(input: CollectorReportingQue
 
 export interface AssignedLoanOption { loanId: string; clientId: string; clientName: string; outstandingPrincipal: number; routeCode: string; }
 export async function listAssignedLoans(input: { branchId: string; officerId: string }): Promise<AssignedLoanOption[]> {
+  // A client can (briefly, or due to a data-entry duplicate) have more than
+  // one active collector_assignments row for the same officer/branch — e.g.
+  // a route correction inserted a second row before the first was end-dated.
+  // Every other query in this file that joins from collector_assignments
+  // dedupes via `DISTINCT ON (ca.client_id)` first (see readSchedules,
+  // readOverdueWatchlist, readOfflineQueue above); this one joined straight
+  // from collector_assignments and so surfaced one duplicate loan option per
+  // extra assignment row. Apply the same active_assignments CTE pattern.
   const result = await pool.query<{ loan_id: string; client_id: string; client_name: string; outstanding_principal: string; route_code: string }>(
-    `SELECT l.id AS loan_id, c.id AS client_id, c.display_name AS client_name,
-            l.outstanding_principal, ca.route_code
-       FROM collector_assignments ca
-       JOIN clients c ON c.id = ca.client_id
-       JOIN loans l ON l.client_id = c.id AND l.branch_id = ca.branch_id
-      WHERE ca.branch_id = $1 AND ca.officer_id = $2
-        AND ca.effective_from <= CURRENT_DATE
-        AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE)
-        AND l.status IN ('approved', 'active', 'overdue')
+    `WITH active_assignments AS (
+       SELECT DISTINCT ON (ca.client_id) ca.client_id, ca.branch_id, ca.route_code
+         FROM collector_assignments ca
+        WHERE ca.branch_id = $1 AND ca.officer_id = $2
+          AND ca.effective_from <= CURRENT_DATE
+          AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE)
+        ORDER BY ca.client_id, ca.effective_from DESC
+     )
+     SELECT l.id AS loan_id, c.id AS client_id, c.display_name AS client_name,
+            l.outstanding_principal, a.route_code
+       FROM active_assignments a
+       JOIN clients c ON c.id = a.client_id
+       JOIN loans l ON l.client_id = c.id AND l.branch_id = a.branch_id
+      WHERE l.status IN ('approved', 'active', 'overdue')
       ORDER BY c.display_name, l.id`,
     [input.branchId, input.officerId],
   );

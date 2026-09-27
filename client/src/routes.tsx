@@ -20,6 +20,7 @@ interface Props {
   collectorHome: ReactNode;
   reconciliation: ReactNode;
   accountantReconciliation: ReactNode;
+  assignmentManager: ReactNode;
 }
 
 function Guard({ role }: { role: Role }) {
@@ -29,7 +30,7 @@ function Guard({ role }: { role: Role }) {
   return <Suspense fallback={<p className="empty-state" role="status">Loading…</p>}><Outlet context={context} /></Suspense>;
 }
 
-export function AppRoutes({ shell, collectorHome, reconciliation, accountantReconciliation }: Props) {
+export function AppRoutes({ shell, collectorHome, reconciliation, accountantReconciliation, assignmentManager }: Props) {
   const role: Role = isRole(shell.identity.role) ? shell.identity.role : 'client';
   const manager = role === 'admin' || role === 'manager';
   const reports = manager ? <ManagerAnalyticsDashboard identity={shell.identity} />
@@ -55,7 +56,7 @@ export function AppRoutes({ shell, collectorHome, reconciliation, accountantReco
           <Route path="clients/new" element={<NewClient />} />
           <Route path="clients/:id" element={<ClientRecord />} />
 
-          <Route path="collections" element={role === 'collector' ? collectorHome : <Placeholder title="Collections" phase={4} />} />
+          <Route path="collections" element={role === 'collector' ? collectorHome : manager ? assignmentManager : <Placeholder title="Collections" phase={4} />} />
           <Route path="reconciliation" element={reconciliationView} />
           <Route path="reports" element={reports} />
           <Route path="apply" element={<NewApplication />} />
