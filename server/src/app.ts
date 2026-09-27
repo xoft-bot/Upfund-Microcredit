@@ -19,6 +19,7 @@ import { registerAccountantReportingRoutes } from './routes/accountantReporting.
 import { registerCollectorReportingRoutes } from './routes/collectorReporting.js';
 import { registerReadApiRoutes } from './routes/readApis.js';
 import { registerBranchRoutes } from './routes/branches.js';
+import { registerCollectorAssignmentRoutes } from './routes/collectorAssignments.js';
 import { isProductionRuntime, validateRuntimeConfig } from './config.js';
 
 export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?: UserResolver } = {}) {
@@ -59,6 +60,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   registerCollectorReportingRoutes(app, options.tokenVerifier, options.userResolver);
   registerReadApiRoutes(app, options.tokenVerifier, options.userResolver);
   registerBranchRoutes(app, options.tokenVerifier, options.userResolver);
+  registerCollectorAssignmentRoutes(app, options.tokenVerifier, options.userResolver);
   const auth = authMiddleware(options.tokenVerifier, options.userResolver);
   if (process.env.NODE_ENV !== 'production') {
   app.post('/api/stage1/commands/audit-ledger', {

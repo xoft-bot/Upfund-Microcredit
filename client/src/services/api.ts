@@ -73,6 +73,12 @@ export interface PortalOverview {
 export interface CreateClientCommand { branchId: string; externalRef: string; displayName: string; }
 export interface CreateApplicationCommand { clientId: string; productId: string; branchId?: string; requestedAmount: number; }
 
+export interface AssignmentRow { id: string; officerId: string; officerName: string; clientId: string; clientName: string; branchId: string; routeCode: string; effectiveFrom: string; effectiveTo: string | null; }
+export interface UnassignedClient { clientId: string; clientName: string; branchId: string; }
+export interface BranchCollector { officerId: string; officerName: string; role: 'collector' | 'officer'; branchId: string; }
+export interface AssignmentWorkspace { assignments: AssignmentRow[]; unassignedClients: UnassignedClient[]; collectors: BranchCollector[]; }
+export interface CreateAssignmentCommand { branchId: string; officerId: string; clientId: string; routeCode: string; effectiveFrom?: string; }
+
 export class ApiRequestError extends Error {
   readonly code: string;
   readonly correlationId?: string;
@@ -222,4 +228,16 @@ export function searchAll(token: string, q: string): Promise<SearchResults> {
 }
 export function getAuditTrail(token: string, params: { entityType?: string; entityId?: string; page?: number; pageSize?: number }): Promise<Paged> {
   return request<Paged>(`/api/v1/audit${readQuery(params)}`, bearer(token));
+}
+export function getAssignmentWorkspace(token: string, options: { branchId?: string; apiBaseUrl?: string } = {}): Promise<AssignmentWorkspace> {
+  return request<AssignmentWorkspace>(`/api/v1/collector-assignments${readQuery({ branchId: options.branchId })}`, bearer(token), options.apiBaseUrl);
+}
+export function createCollectorAssignment(command: CreateAssignmentCommand, token: string, apiBaseUrl = ''): Promise<AssignmentRow> {
+  return request<AssignmentRow>('/api/v1/collector-assignments', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(command) }, apiBaseUrl);
+}
+export function updateAssignmentRouteCode(id: string, routeCode: string, token: string, apiBaseUrl = ''): Promise<{ id: string; updated: boolean }> {
+  return request<{ id: string; updated: boolean }>(`/api/v1/collector-assignments/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify({ routeCode }) }, apiBaseUrl);
+}
+export function endCollectorAssignment(id: string, token: string, options: { effectiveTo?: string; apiBaseUrl?: string } = {}): Promise<{ id: string; unassigned: boolean }> {
+  return request<{ id: string; unassigned: boolean }>(`/api/v1/collector-assignments/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}`, 'x-correlation-id': crypto.randomUUID() }, body: JSON.stringify(options.effectiveTo ? { effectiveTo: options.effectiveTo } : {}) }, options.apiBaseUrl);
 }

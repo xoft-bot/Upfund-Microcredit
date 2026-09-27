@@ -20,6 +20,7 @@ const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
 const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
 const LazyManagerVarianceDashboard = lazy(async () => { const module = await import('./components/field/ManagerVarianceDashboard.js'); return { default: module.ManagerVarianceDashboard }; });
 const LazyAccountantReconciliationView = lazy(async () => { const module = await import('./components/field/AccountantReconciliationView.js'); return { default: module.AccountantReconciliationView }; });
+const LazyAssignmentManager = lazy(async () => { const module = await import('./components/field/AssignmentManager.js'); return { default: module.AssignmentManager }; });
 const LazyReceiptPreview = lazy(async () => { const module = await import('./components/field/ReceiptPreview.js'); return { default: module.ReceiptPreview }; });
 const emptyMetrics: QueueMetrics = { queued: 0, syncing: 0, rejected: 0, conflict: 0, stale: 0 };
 const COLLECTION_QUEUE_ROLES = ['admin', 'manager', 'officer', 'collector'];
@@ -296,6 +297,16 @@ function App() {
     </Suspense>
     : null;
 
+  // Manager/admin Collections screen — replaces the Phase-4 placeholder that
+  // rendered for every non-collector role. Fetches and mutates its own data
+  // (collector-assignments workspace), same self-contained pattern as the
+  // variance dashboards above.
+  const assignmentManager = managerContext
+    ? <Suspense fallback={<p className="empty-state">Loading assignments…</p>}>
+      <LazyAssignmentManager branchId={managerContext.branchId} getToken={getToken} />
+    </Suspense>
+    : null;
+
   return (
     <BrowserRouter>
       <AppRoutes
@@ -303,6 +314,7 @@ function App() {
         collectorHome={collectorHome}
         reconciliation={reconciliation}
         accountantReconciliation={accountantReconciliation}
+        assignmentManager={assignmentManager}
       />
     </BrowserRouter>
   );
