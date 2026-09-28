@@ -4,7 +4,7 @@ import { getDatabaseConnectionString, isProductionRuntime } from './config.js';
 const { Pool } = pg;
 
 export interface DatabasePoolSettings {
-  connectionString?: string;
+  connectionString: string;
   max: number;
   idleTimeoutMillis: number;
   connectionTimeoutMillis: number;
@@ -14,9 +14,8 @@ export interface DatabasePoolSettings {
 export function getDatabasePoolSettings(env: NodeJS.ProcessEnv = process.env): DatabasePoolSettings {
   const configuredMax = Number(env.DATABASE_POOL_MAX ?? 5);
   const max = Number.isInteger(configuredMax) && configuredMax >= 5 && configuredMax <= 10 ? configuredMax : 5;
-  const connectionString = getDatabaseConnectionString(env);
   return {
-    ...(connectionString ? { connectionString } : {}),
+    connectionString: getDatabaseConnectionString(env),
     max,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
@@ -54,47 +53,11 @@ export function summarizeDatabaseError(error: unknown): DatabaseErrorDiagnostic 
   };
 }
 
-function createMockClient(): pg.PoolClient {
-  return {
-    query: async (text: string | { text: string }, _values?: unknown[]) => {
-      const sql = typeof text === 'string' ? text : text.text;
-      if (sql.includes('SELECT 1 AS ok') || sql.includes('SELECT 1')) {
-        return { rows: [{ ok: 1 }], rowCount: 1, command: 'SELECT', oid: 0, fields: [] } as never;
-      }
-      if (sql.includes('pg_try_advisory_lock')) {
-        return { rows: [{ locked: true }], rowCount: 1, command: 'SELECT', oid: 0, fields: [] } as never;
-      }
-      if (sql.includes('FROM branches')) {
-        return { rows: [{ id: '00000000-0000-4000-8000-000000000002', code: 'MAIN', name: 'Kampala Central' }], rowCount: 1, command: 'SELECT', oid: 0, fields: [] } as never;
-      }
-      return { rows: [], rowCount: 0, command: 'SELECT', oid: 0, fields: [] } as never;
-    },
-    release: () => {},
-  } as unknown as pg.PoolClient;
-}
+export const pool = new Pool(getDatabasePoolSettings());
 
-function createPool(): pg.Pool {
-  const connectionString = getDatabaseConnectionString();
-  if (connectionString) {
-    const realPool = new Pool(getDatabasePoolSettings());
-    realPool.on('error', (error) => {
-      console.error(JSON.stringify({ event: 'database_pool_error', ...summarizeDatabaseError(error) }));
-    });
-    return realPool;
-  }
-
-  // Mock pool when no PostgreSQL connection string is provided
-  const mockClient = createMockClient();
-  const poolMock = {
-    query: async (text: string | { text: string }, values?: unknown[]) => mockClient.query(text as string, values as unknown[]),
-    connect: async () => createMockClient(),
-    on: () => poolMock,
-    end: async () => {},
-  };
-  return poolMock as unknown as pg.Pool;
-}
-
-export const pool = createPool();
+pool.on('error', (error) => {
+  console.error(JSON.stringify({ event: 'database_pool_error', ...summarizeDatabaseError(error) }));
+});
 
 export type DbClient = pg.PoolClient;
 

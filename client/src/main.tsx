@@ -274,14 +274,7 @@ function App() {
   // Existing collector workflow, unchanged, mounted as the content of Today / Capture.
   const collectorHome = collectorContextReady
     ? <div className="workflow-grid">
-      <CollectorReportingDashboard
-        identity={identity}
-        metrics={metrics}
-        queueReady={queueReady}
-        queueError={queueError}
-        isSyncing={metrics.syncing > 0}
-        onSync={() => void queue.retry()}
-      />
+      <CollectorReportingDashboard identity={identity} />
       <CollectorRouteView queue={queue} routeName={routeName} records={displayedRecords} metrics={metrics} queueReady={queueReady} queueError={queueError} onCollect={() => document.getElementById('collection-form')?.scrollIntoView({ behavior: 'smooth' })} />
       <div id="collection-form">
         <FieldCollectionForm queue={queue} collectorId={identity.collectorId} branchId={identity.branchId!} deviceId={getDeviceId()} assignedLoans={assignedLoans} onQueued={addRecord} disabled={!queueReady || Boolean(queueError)} />

@@ -6,7 +6,7 @@ export interface RuntimeConfig {
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const DEFAULT_SERVER_PORT = 3000;
+export const DEFAULT_SERVER_PORT = 10_000;
 export const DEFAULT_PRODUCTION_CORS_ORIGINS = ['https://upfund-microcredit.web.app', 'https://upfund-microcredit.firebaseapp.com'];
 export const SUPABASE_TRANSACTION_POOLER_PORT = 6543;
 
@@ -31,11 +31,8 @@ export function getFirebaseAuthMode(env: NodeJS.ProcessEnv = process.env): strin
 
 export function getDatabaseConnectionString(env: NodeJS.ProcessEnv = process.env, missing: string[] = []): string {
   const value = env.DATABASE_POOLER_URL?.trim() || env.DATABASE_URL?.trim() || env.PGURI?.trim();
-  if (!value || value.includes('<') || value.includes('>')) {
-    missing.push('DATABASE_URL');
-    return '';
-  }
-  return value;
+  if (!value) missing.push('DATABASE_URL');
+  return value ?? '';
 }
 
 export function getDatabaseConnectionPort(env: NodeJS.ProcessEnv = process.env): number | null {
