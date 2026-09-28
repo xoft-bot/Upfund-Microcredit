@@ -12,6 +12,24 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Integration tests skip themselves when DATABASE_URL is unset, and two auth tests need a real
+    # database regardless. Without this service CI was red on every run and ~58 tests never ran.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: upfund
+          POSTGRES_PASSWORD: upfund
+          POSTGRES_DB: upfund_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U upfund -d upfund_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://upfund:upfund@127.0.0.1:5432/upfund_test
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -35,6 +53,9 @@ jobs:
 
       - name: Lint
         run: pnpm run lint
+
+      - name: Apply database migrations
+        run: pnpm run db:migrate
 
       - name: Test
         run: pnpm test -- --run

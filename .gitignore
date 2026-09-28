@@ -13,3 +13,7 @@ coverage/
 .firebase/
 .firebase/
 .firebase/
+
+# Chat pastes the Replit Agent attaches to prompts: never source, and they have been auto-committed as junk before.
+attached_assets/Pasted-*.txt
+/*.patch
