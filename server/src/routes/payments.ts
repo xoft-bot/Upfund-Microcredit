@@ -69,6 +69,7 @@ const PAYMENT_ERROR_STATUS: Record<string, { status: number; code: string; messa
   FIELD_COLLECTION_CONFLICT: { status: 409, code: 'CONFLICT', message: 'This offline collection conflicts with an existing server record' },
   LOAN_NOT_FOUND_OR_BRANCH_DENIED: { status: 404, code: 'LOAN_NOT_FOUND', message: 'Loan not found for this branch' },
   LOAN_CLIENT_MISMATCH: { status: 409, code: 'LOAN_CLIENT_MISMATCH', message: 'This loan does not belong to the specified client' },
+  IDEMPOTENCY_KEY_REUSE_MISMATCH: { status: 409, code: 'IDEMPOTENCY_KEY_REUSE_MISMATCH', message: 'This idempotency key was already used for a different payment' },
   LOAN_NOT_PAYABLE: { status: 409, code: 'LOAN_NOT_PAYABLE', message: 'This loan is not in a state that accepts payments' },
   COLLECTOR_NOT_ASSIGNED: { status: 403, code: 'COLLECTOR_NOT_ASSIGNED', message: 'You are not currently assigned to this client' },
   NO_OPEN_REPAYMENT_SCHEDULE: { status: 409, code: 'NO_OPEN_REPAYMENT_SCHEDULE', message: 'This loan has no open installment to apply a payment to' },
