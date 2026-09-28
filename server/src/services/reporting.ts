@@ -1,5 +1,6 @@
 import { pool } from '../db.js';
 import { getParThresholdConfig } from './par-threshold-config.js';
+import { cachedReport } from './reporting-cache.js';
 import type {
   BranchPerformance,
   CollectionBreakdown,
@@ -15,6 +16,8 @@ export interface ReportingQueryInput {
   asOf?: string;
   from?: string;
   to?: string;
+  /** True when a person explicitly pressed Refresh: recompute now instead of serving a cached snapshot. */
+  fresh?: boolean;
 }
 
 interface NormalizedReportingInput extends ReportingFilters {}
@@ -272,14 +275,29 @@ async function readBranchPerformance(input: NormalizedReportingInput): Promise<B
        WHERE r.status IN ('pending', 'variance')
        GROUP BY r.branch_id
      ),
-     schedule_rollup AS (
+     -- Same definitions as readPortfolio's due_window / realized_window, grouped by branch, so the
+     -- branch table and the portfolio summary can never disagree for the same branch and window.
+     -- The previous version LEFT JOINed payments onto schedules, which (a) repeated an installment's
+     -- due amount once per payment it received and (b) credited a payment to only the first installment
+     -- it touched (payments.schedule_id) instead of the per-installment split in payment_installments.
+     due_rollup AS (
        SELECT l.branch_id,
-              COALESCE(SUM(s.principal_due + s.penalty_due + s.interest_due), 0) AS scheduled_amount,
-              COALESCE(SUM(p.principal_amount + p.penalty_amount + p.interest_amount), 0) AS realized_due_amount
+              COALESCE(SUM(s.principal_due + s.penalty_due + s.interest_due), 0) AS scheduled_amount
        FROM repayment_schedules s
        JOIN loans l ON l.id = s.loan_id
-       LEFT JOIN payments p ON p.schedule_id = s.id AND p.status = 'posted' AND p.created_at::date BETWEEN $2::date AND $3::date
        WHERE s.due_on BETWEEN $2::date AND $3::date
+       GROUP BY l.branch_id
+     ),
+     realized_rollup AS (
+       SELECT l.branch_id,
+              COALESCE(SUM(pi.principal_amount + pi.penalty_amount + pi.interest_amount), 0) AS realized_due_amount
+       FROM payment_installments pi
+       JOIN payments p ON p.id = pi.payment_id
+       JOIN repayment_schedules s ON s.id = pi.schedule_id
+       JOIN loans l ON l.id = p.loan_id
+       WHERE p.status = 'posted'
+         AND p.created_at::date BETWEEN $2::date AND $3::date
+         AND s.due_on BETWEEN $2::date AND $3::date
        GROUP BY l.branch_id
      )
      SELECT b.id AS branch_id, b.name AS branch_name,
@@ -289,14 +307,15 @@ async function readBranchPerformance(input: NormalizedReportingInput): Promise<B
             COALESCE(c.reconciled_collections, 0) AS reconciled_collections,
             COALESCE(c.pending_collections, 0) AS pending_collections,
             COALESCE(r.open_reconciliations, 0) AS open_reconciliations,
-            COALESCE(s.scheduled_amount, 0) AS scheduled_amount,
-            COALESCE(s.realized_due_amount, 0) AS realized_due_amount
+            COALESCE(du.scheduled_amount, 0) AS scheduled_amount,
+            COALESCE(rr.realized_due_amount, 0) AS realized_due_amount
        FROM scoped_branches b
        LEFT JOIN loan_rollup l ON l.branch_id = b.id
        LEFT JOIN disbursement_rollup d ON d.branch_id = b.id
        LEFT JOIN collection_rollup c ON c.branch_id = b.id
        LEFT JOIN reconciliation_rollup r ON r.branch_id = b.id
-       LEFT JOIN schedule_rollup s ON s.branch_id = b.id
+       LEFT JOIN due_rollup du ON du.branch_id = b.id
+       LEFT JOIN realized_rollup rr ON rr.branch_id = b.id
       ORDER BY b.name ASC`,
     [input.branchId, input.from, input.to],
   );
@@ -405,8 +424,7 @@ async function readOpenReconciliations(input: NormalizedReportingInput): Promise
   };
 }
 
-export async function getManagerReportingSnapshot(input: ReportingQueryInput = {}): Promise<ManagerReportingSnapshot> {
-  const normalized = normalizeReportingInput(input);
+async function computeManagerReportingSnapshot(normalized: NormalizedReportingInput): Promise<ManagerReportingSnapshot> {
   const [summary, collections, branchPerformance, allocations, openReconciliations] = await Promise.all([
     readPortfolio(normalized),
     readCollections(normalized),
@@ -414,5 +432,10 @@ export async function getManagerReportingSnapshot(input: ReportingQueryInput = {
     readAllocations(normalized),
     readOpenReconciliations(normalized),
   ]);
-  return { filters: normalized, summary, ...collections, branchPerformance, allocations, openReconciliations };
+  return { generatedAt: new Date().toISOString(), filters: normalized, summary, ...collections, branchPerformance, allocations, openReconciliations };
+}
+
+export async function getManagerReportingSnapshot(input: ReportingQueryInput = {}): Promise<ManagerReportingSnapshot> {
+  const normalized = normalizeReportingInput(input);
+  return cachedReport('manager', normalized, () => computeManagerReportingSnapshot(normalized), { fresh: input.fresh });
 }

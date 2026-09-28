@@ -80,7 +80,7 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
     }
   };
 
-  const load = useCallback(async (filters: { branchId?: string; from?: string; to?: string } = {}) => {
+  const load = useCallback(async (filters: { branchId?: string; from?: string; to?: string; fresh?: boolean } = {}) => {
     setLoading(true);
     setError('');
     try {
@@ -105,7 +105,8 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void load({ branchId: branchId || undefined, from: from || undefined, to: to || undefined });
+    // Pressing the button is an explicit request for current numbers, so skip the short server cache.
+    void load({ branchId: branchId || undefined, from: from || undefined, to: to || undefined, fresh: true });
   };
 
   const totalDebits = useMemo(() => snapshot?.trialBalance.reduce((sum, row) => sum + row.debitTotal, 0) ?? 0, [snapshot]);

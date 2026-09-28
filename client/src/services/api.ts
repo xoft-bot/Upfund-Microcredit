@@ -125,20 +125,22 @@ export function getReconciliationQueue(token: string, options: { branchId?: stri
   if (options.branchId) params.set('branchId', options.branchId);
   return request<{ batches: ReconciliationQueueBatch[] }>(`/api/v1/reconciliations/queue${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } }, options.apiBaseUrl);
 }
-export function getManagerReport(token: string, options: { branchId?: string; asOf?: string; from?: string; to?: string } = {}): Promise<ManagerReportingSnapshot> {
+export function getManagerReport(token: string, options: { branchId?: string; asOf?: string; from?: string; to?: string; fresh?: boolean } = {}): Promise<ManagerReportingSnapshot> {
   const params = new URLSearchParams();
   if (options.branchId) params.set('branchId', options.branchId);
   if (options.asOf) params.set('asOf', options.asOf);
   if (options.from) params.set('from', options.from);
   if (options.to) params.set('to', options.to);
+  if (options.fresh) params.set('fresh', 'true');
   return request<ManagerReportingSnapshot>(`/api/v1/reports/manager${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
 }
-export function getAccountantReport(token: string, options: { branchId?: string; asOf?: string; from?: string; to?: string } = {}): Promise<AccountantReportingSnapshot> {
+export function getAccountantReport(token: string, options: { branchId?: string; asOf?: string; from?: string; to?: string; fresh?: boolean } = {}): Promise<AccountantReportingSnapshot> {
   const params = new URLSearchParams();
   if (options.branchId) params.set('branchId', options.branchId);
   if (options.asOf) params.set('asOf', options.asOf);
   if (options.from) params.set('from', options.from);
   if (options.to) params.set('to', options.to);
+  if (options.fresh) params.set('fresh', 'true');
   return request<AccountantReportingSnapshot>(`/api/v1/reports/accountant${params.size ? `?${params.toString()}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
 }
 export interface ParThresholdConfig { par30Days: number; par60Days: number; par90Days: number; updatedBy: string | null; updatedAt: string; }

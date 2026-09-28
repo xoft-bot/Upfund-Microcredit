@@ -9,6 +9,7 @@ interface ManagerReportQuery {
   asOf?: string;
   from?: string;
   to?: string;
+  fresh?: boolean;
 }
 
 export function registerReportingRoutes(app: FastifyInstance, verifier?: TokenVerifier, resolveUser?: UserResolver): void {
@@ -30,6 +31,7 @@ export function registerReportingRoutes(app: FastifyInstance, verifier?: TokenVe
           asOf: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
           from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
           to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+          fresh: { type: 'boolean' },
         },
       },
     },
@@ -41,7 +43,7 @@ export function registerReportingRoutes(app: FastifyInstance, verifier?: TokenVe
       return reply.code(400).send({ ok: false, error: { code: 'BRANCH_REQUIRED', message: 'A branch is required for manager reporting' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
     }
     try {
-      const snapshot = await getManagerReportingSnapshot({ branchId, asOf: query.asOf, from: query.from, to: query.to });
+      const snapshot = await getManagerReportingSnapshot({ branchId, asOf: query.asOf, from: query.from, to: query.to, fresh: query.fresh });
       return { ok: true, data: snapshot, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
     } catch (error) {
       if (error instanceof Error && ['REPORTING_AS_OF_INVALID', 'REPORTING_DATE_RANGE_INVALID'].includes(error.message)) {
