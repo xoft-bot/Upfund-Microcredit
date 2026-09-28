@@ -156,6 +156,9 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
      WHERE p.idempotency_key = $1 FOR UPDATE`, [input.idempotencyKey],
   );
   if (existing.rowCount) {
+    if (existing.rows[0].loan_id !== input.loanId || Number(existing.rows[0].amount) !== input.amount) {
+      throw new Error('IDEMPOTENCY_KEY_REUSE_MISMATCH');
+    }
     await persistFieldCollectionSource(client, input, existing.rows[0].id);
     return {
       paymentId: existing.rows[0].id,
