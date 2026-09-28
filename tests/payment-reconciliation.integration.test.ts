@@ -120,7 +120,7 @@ suite('Stage 2 atomic payment and reconciliation', () => {
         paymentMethod: 'cash',
         capturedAt: '2026-08-25T00:00:00.000Z',
         correlationId: randomUUID(),
-      })).rejects.toThrow('FIELD_COLLECTION_CONFLICT');
+      })).rejects.toThrow('IDEMPOTENCY_KEY_REUSE_MISMATCH');
       const holding = await pool!.query<{ amount: string; status: string }>(
         `SELECT amount, status FROM overpayment_holdings WHERE payment_id = $1`,
         [result.paymentId],
