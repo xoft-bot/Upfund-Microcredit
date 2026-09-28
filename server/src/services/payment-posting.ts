@@ -148,8 +148,8 @@ export async function postManualPaymentOnClient(client: DbClient, input: ManualP
   );
   if (!loan.rowCount || loan.rows[0].branch_id !== input.branchId) throw new Error('LOAN_NOT_FOUND_OR_BRANCH_DENIED');
   if (input.clientId && loan.rows[0].client_id !== input.clientId) throw new Error('LOAN_CLIENT_MISMATCH');
-  const existing = await client.query<{ id: string; receipt_reference: string; principal_amount: number; penalty_amount: number; interest_amount: number; charge_amount: number; overpayment_amount: number; outstanding_principal: number; status: string; ledger_transaction_id: string }>(
-    `SELECT p.id, p.receipt_reference, p.principal_amount, p.penalty_amount, p.interest_amount,
+  const existing = await client.query<{ id: string; loan_id: string; amount: number; receipt_reference: string; principal_amount: number; penalty_amount: number; interest_amount: number; charge_amount: number; overpayment_amount: number; outstanding_principal: number; status: string; ledger_transaction_id: string }>(
+    `SELECT p.id, p.loan_id, p.amount, p.receipt_reference, p.principal_amount, p.penalty_amount, p.interest_amount,
             p.charge_amount, p.overpayment_amount, l.outstanding_principal, l.status,
             lt.id AS ledger_transaction_id
      FROM payments p JOIN loans l ON l.id = p.loan_id JOIN ledger_transactions lt ON lt.source_id = p.id AND lt.source_type = 'manual_payment'
