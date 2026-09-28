@@ -1,0 +1,5 @@
+{
+  "name": "Upfund Microcredit",
+  "description": "Secure field collections, loan lifecycle, and reconciliation platform for Upfund Microcredit.",
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

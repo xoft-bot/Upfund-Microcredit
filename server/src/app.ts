@@ -2,6 +2,9 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+import path from 'node:path';
+import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { pool, summarizeDatabaseError, withTransaction, insertAuditEvent } from './db.js';
 import { authMiddleware, type TokenVerifier, type UserResolver } from './middleware/auth.js';
@@ -29,6 +32,8 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   app.register(cors, { origin: runtimeConfig.allowedOrigins.length ? runtimeConfig.allowedOrigins : false });
   app.register(helmet, {
     crossOriginEmbedderPolicy: false,
+    frameguard: false,
+    contentSecurityPolicy: false,
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     hsts: isProductionRuntime() ? { maxAge: 31_536_000, includeSubDomains: true, preload: true } : false,
   });
@@ -43,7 +48,7 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
   app.get('/health', async (request, reply) => {
     try {
       const result = await pool.query('SELECT 1 AS ok');
-      return { ok: true, data: { service: 'upfund-microcredit-api', database: result.rows[0].ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
+      return { ok: true, data: { service: 'upfund-microcredit-api', database: result.rows[0]?.ok === 1 ? 'up' : 'unknown' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
     } catch (error) {
       request.log.error({ database: summarizeDatabaseError(error), correlationId: request.headers['x-correlation-id'] }, 'health database check failed');
       return reply.code(503).send({ ok: false, data: { service: 'upfund-microcredit-api', database: 'down' }, error: { code: 'DATABASE_UNAVAILABLE', message: 'Database connectivity check failed' }, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION });
@@ -89,6 +94,27 @@ export function buildApp(options: { tokenVerifier?: TokenVerifier; userResolver?
     return { ok: true, data: result, correlationId: request.headers['x-correlation-id'], version: SYSTEM_VERSION };
   });
 
+  }
+
+  const clientDistPath = path.resolve(process.cwd(), 'client/dist');
+  if (fs.existsSync(clientDistPath)) {
+    app.register(fastifyStatic, {
+      root: clientDistPath,
+      prefix: '/',
+      wildcard: false,
+    });
+
+    app.setNotFoundHandler(async (request, reply) => {
+      const url = request.raw.url ?? '';
+      if (url.startsWith('/api') || url.startsWith('/health')) {
+        return reply.code(404).send({
+          ok: false,
+          error: { code: 'NOT_FOUND', message: 'Route not found' },
+          version: SYSTEM_VERSION,
+        });
+      }
+      return reply.sendFile('index.html');
+    });
   }
 
   app.setErrorHandler((error, request, reply) => {
