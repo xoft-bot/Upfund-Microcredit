@@ -1,4 +1,5 @@
 import { pool, withTransaction, insertAuditEvent } from '../db.js';
+import { clearReportingCache } from './reporting-cache.js';
 
 /**
  * Read/update path for the PAR30/60/90 threshold windows used by reporting.ts's
@@ -59,7 +60,7 @@ export async function updateParThresholdConfig(input: UpdateParThresholdInput): 
   if (!(par30Days < par60Days && par60Days < par90Days)) {
     throw new Error('PAR_THRESHOLD_ORDER_INVALID');
   }
-  return withTransaction(async (client) => {
+  const updated = await withTransaction(async (client) => {
     const result = await client.query<ParThresholdRow>(
       `UPDATE par_threshold_config
           SET par30_days = $1, par60_days = $2, par90_days = $3, updated_by = $4, updated_at = now()
@@ -81,4 +82,8 @@ export async function updateParThresholdConfig(input: UpdateParThresholdInput): 
     });
     return toConfig(result.rows[0]);
   });
+  // PAR windows changed: cached dashboards were computed with the old windows, so drop them now
+  // instead of letting them show the old definition for up to a TTL.
+  clearReportingCache();
+  return updated;
 }

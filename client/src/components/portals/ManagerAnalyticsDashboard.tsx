@@ -31,7 +31,7 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const load = useCallback(async (filters: { branchId?: string; from?: string; to?: string } = {}) => {
+  const load = useCallback(async (filters: { branchId?: string; from?: string; to?: string; fresh?: boolean } = {}) => {
     setLoading(true);
     setError('');
     try {
@@ -58,7 +58,8 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void load({ branchId: branchId || undefined, from: from || undefined, to: to || undefined });
+    // Pressing the button is an explicit request for current numbers, so skip the short server cache.
+    void load({ branchId: branchId || undefined, from: from || undefined, to: to || undefined, fresh: true });
   };
 
   const dailyMax = useMemo(() => Math.max(1, ...(snapshot?.dailyCollections.map((item) => item.reconciledAmount + item.pendingAmount) ?? [])), [snapshot]);

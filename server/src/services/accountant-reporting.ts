@@ -1,5 +1,6 @@
 import { pool } from '../db.js';
 import { normalizeReportingInput, type ReportingQueryInput } from './reporting.js';
+import { cachedReport } from './reporting-cache.js';
 import type {
   AccountantJournalEntry,
   AccountantReconciliationAudit,
@@ -248,6 +249,10 @@ async function readReconciliationAudit(input: ReturnType<typeof normalizeReporti
 
 export async function getAccountantReportingSnapshot(input: ReportingQueryInput = {}): Promise<AccountantReportingSnapshot> {
   const normalized = normalizeReportingInput(input);
+  return cachedReport('accountant', normalized, () => computeAccountantReportingSnapshot(normalized), { fresh: input.fresh });
+}
+
+async function computeAccountantReportingSnapshot(normalized: ReturnType<typeof normalizeReportingInput>): Promise<AccountantReportingSnapshot> {
   const [branches, journalEntries, trialBalance, waterfall, reconciliationAudit] = await Promise.all([
     readBranches(normalized),
     readJournalEntries(normalized),
@@ -256,6 +261,7 @@ export async function getAccountantReportingSnapshot(input: ReportingQueryInput 
     readReconciliationAudit(normalized),
   ]);
   return {
+    generatedAt: new Date().toISOString(),
     filters: normalized,
     branches,
     journalEntries,

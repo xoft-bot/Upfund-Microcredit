@@ -83,6 +83,8 @@ export interface OpenReconciliation {
 }
 
 export interface ManagerReportingSnapshot {
+  /** When the numbers were computed. Can be up to REPORTING_CACHE_TTL_MS (default 30s) old. */
+  generatedAt?: string;
   filters: ReportingFilters;
   summary: ManagerReportingSummary;
   dailyCollections: DailyCollectionSummary[];
@@ -173,6 +175,7 @@ export interface AccountantReconciliationAudit {
 }
 
 export interface AccountantReportingSnapshot {
+  generatedAt?: string;
   filters: ReportingFilters;
   branches: Array<{ branchId: string; branchName: string }>;
   journalEntries: AccountantJournalEntry[];
