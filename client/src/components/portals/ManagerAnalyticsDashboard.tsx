@@ -88,7 +88,7 @@ export function ManagerAnalyticsDashboard({ identity }: ManagerAnalyticsDashboar
          totalPendingQueueCount={queueCounts?.offline_queue?.pending ?? 0}
          isLoading={queueCountsLoading}
          error={queueCountsError}
-         onNavigateToQueue={() => navigate('/collections/offline-queue')}
+          onNavigateToQueue={() => navigate('/collections/offline-queue?staleOnly=true')}
        />
     </div>
     <div className="par-grid"><ParCard label="PAR 30" metric={snapshot.summary.par30} /><ParCard label="PAR 60" metric={snapshot.summary.par60} /><ParCard label="PAR 90" metric={snapshot.summary.par90} /></div>

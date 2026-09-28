@@ -153,6 +153,7 @@ export function hasBottomBar(role: Role): boolean { return role === 'collector' 
 
 export function canAccess(role: Role, pathname: string): boolean {
   if (pathname === '/') return true;
+  if (pathname === '/collections/offline-queue') return role === 'admin' || role === 'manager';
   return navFor(role).some((item) => item.path !== '/' && (pathname === item.path || pathname.startsWith(`${item.path}/`)));
 }
 

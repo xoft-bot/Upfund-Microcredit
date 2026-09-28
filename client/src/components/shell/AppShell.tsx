@@ -19,7 +19,7 @@ export interface ShellProps {
   onSelectBranch: (branchId: string) => void;
 }
 /** Passed to every route via <Outlet context>. Read it with useOutletContext<ShellOutletContext>(). */
-export type ShellOutletContext = QueueCountsState & { role: Role; countsEnabled: boolean; getToken: () => Promise<string>; permissions: readonly string[]; branchId: string | null; clientId: string | null };
+export type ShellOutletContext = QueueCountsState & { role: Role; countsEnabled: boolean; getToken: () => Promise<string>; permissions: readonly string[]; branchId: string | null; clientId: string | null; branches: ReadonlyArray<{ id: string; code: string; name: string }>; selectedBranchId?: string };
 
 function Badge({ item, counts }: { item: NavItem; counts: QueueCountsState['counts'] }) {
   if (!item.badge) return null;
@@ -39,7 +39,7 @@ export function AppShell({ identity, email, backendLive, identityError, onSignOu
 
   const crumbs = breadcrumbsFor(role, location.pathname);
   const bottomItems = hasBottomBar(role) ? items.slice(0, 4) : [];
-  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [], branchId: identity.branchId ?? null, clientId: identity.clientId ?? null };
+  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [], branchId: identity.branchId ?? null, clientId: identity.clientId ?? null, branches, selectedBranchId };
 
   return (
     <div className={`app-shell${bottomItems.length ? ' has-bottom-bar' : ''}`}>

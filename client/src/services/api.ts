@@ -198,6 +198,29 @@ export type QueueCounts = Record<string, Record<string, number> | undefined> & {
 export interface Paged<T = ListRow> { items: T[]; total: number; page: number; pageSize: number }
 export interface ListParams { page?: number; pageSize?: number; q?: string; queue?: string; status?: string; product?: string; from?: string; to?: string; branchId?: string }
 export interface SearchResults { clients?: ListRow[]; loans?: ListRow[]; applications?: ListRow[]; receipts?: ListRow[] }
+export interface FieldCollectionRecordListRow {
+  id: string;
+  localId: string;
+  clientId: string | null;
+  clientName: string | null;
+  collectorId: string | null;
+  collectorName: string | null;
+  branchId: string;
+  amount: number;
+  capturedAt: string;
+  ageDays: number;
+  status: string;
+  syncedAt: string | null;
+  paymentId: string | null;
+  receiptReference: string | null;
+}
+export interface FieldCollectionRecordList {
+  items: FieldCollectionRecordListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: { pending: number; stale: number };
+}
 
 function readQuery(params: object): string {
   const search = new URLSearchParams();
@@ -222,6 +245,9 @@ export function listClients(token: string, params: ListParams = {}): Promise<Pag
 }
 export function listPayments(token: string, params: ListParams = {}): Promise<Paged> {
   return request<Paged>(`/api/v1/payments${readQuery(params)}`, bearer(token));
+}
+export function listFieldCollectionRecords(token: string, params: ListParams & { staleOnly?: boolean } = {}): Promise<FieldCollectionRecordList> {
+  return request<FieldCollectionRecordList>(`/api/v1/field-collection-records${readQuery(params)}`, bearer(token));
 }
 export function getLoanApplicationRecord(id: string, token: string): Promise<ListRow> {
   return request<ListRow>(`/api/v1/loan-applications/${encodeURIComponent(id)}`, bearer(token));
