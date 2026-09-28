@@ -6,6 +6,7 @@ import { canAccess, isRole, type Role } from './config/navConfig.js';
 const ActionCenter = lazy(() => import('./pages/ActionCenter.js'));
 const Placeholder = lazy(() => import('./pages/Placeholder.js'));
 const QueuePage = lazy(() => import('./pages/QueuePage.js'));
+const OfflineQueuePage = lazy(() => import('./pages/OfflineQueuePage.js'));
 const ApplicationRecord = lazy(() => import('./pages/ApplicationRecord.js'));
 const LoanRecord = lazy(() => import('./pages/LoanRecord.js'));
 const ClientRecord = lazy(() => import('./pages/ClientRecord.js'));
@@ -57,7 +58,7 @@ export function AppRoutes({ shell, collectorHome, reconciliation, accountantReco
           <Route path="clients/:id" element={<ClientRecord />} />
 
           <Route path="collections" element={role === 'collector' ? collectorHome : manager ? assignmentManager : <Placeholder title="Collections" phase={4} />} />
-          <Route path="collections/offline-queue" element={<Placeholder title="Offline queue" phase={3} />} />
+          <Route path="collections/offline-queue" element={<OfflineQueuePage />} />
           <Route path="reconciliation" element={reconciliationView} />
           <Route path="reports" element={reports} />
           <Route path="apply" element={<NewApplication />} />

@@ -7,6 +7,7 @@ import { SYSTEM_VERSION } from '../../../shared/version.js';
 
 type Query = Record<string, string | undefined>;
 type PageQuery = Query & { page?: string; pageSize?: string; q?: string; branchId?: string; queue?: string; status?: string; product?: string; from?: string; to?: string };
+type FieldCollectionQuery = PageQuery & { staleOnly?: boolean | string };
 type Page = { page: number; pageSize: number; offset: number };
 
 const staffRoles: UserRole[] = ['admin', 'manager', 'officer'];
@@ -19,6 +20,9 @@ const searchRoles: UserRole[] = ['admin', 'manager', 'officer', 'accountant', 'c
 const appQueues = new Set(['draft', 'in_review', 'approved', 'rejected']);
 const loanQueues = new Set(['approved', 'active', 'overdue', 'defaulted', 'written_off', 'completed', 'due_today']);
 const paymentStatuses = new Set(['recorded', 'pending_reconciliation', 'verified', 'posted', 'reversed']);
+const fieldCollectionStatuses = paymentStatuses;
+const pendingFieldCollectionPredicate = "f.status IN ('recorded', 'pending_reconciliation')";
+const staleFieldCollectionPredicate = `${pendingFieldCollectionPredicate} AND f.synced_at IS NULL AND f.captured_at < NOW() - INTERVAL '7 days'`;
 
 function pageOf(query: PageQuery): Page {
   const page = Number(query.page ?? 1);
@@ -132,6 +136,73 @@ async function pagedPayments(actor: Actor, query: PageQuery) {
   return paginationData(rows.rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, /Amount$/.test(k) || k === 'amount' ? Number(v) : v]))), Number(count.rows[0]?.count ?? 0), page);
 }
 
+async function pagedFieldCollectionRecords(actor: Actor, query: FieldCollectionQuery) {
+  const page = pageOf(query);
+  if (query.status && !fieldCollectionStatuses.has(query.status)) {
+    throw Object.assign(new Error('Invalid field collection status'), { statusCode: 400, code: 'INVALID_FIELD_COLLECTION_STATUS' });
+  }
+  const scope = scopeFor(actor, 'field_collection', 'f', query.branchId);
+  const values = [...scope.values];
+  let n = scope.next;
+  const where = [scope.sql];
+  const staleOnly = query.staleOnly === true || query.staleOnly === 'true';
+  if (query.status) {
+    where.push(`f.status = $${n}`);
+    values.push(query.status);
+    n++;
+  }
+  if (query.q) {
+    where.push(`(c.display_name ILIKE $${n} OR f.local_id ILIKE $${n})`);
+    values.push(likeOf(query.q));
+    n++;
+  }
+  if (staleOnly) where.push(staleFieldCollectionPredicate);
+  const predicate = where.join(' AND ');
+  const [count, summary, rows] = await Promise.all([
+    pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM field_collection_records f LEFT JOIN clients c ON c.id = f.client_id WHERE ${predicate}`, values),
+    pool.query<{ pending: string; stale: string }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE ${pendingFieldCollectionPredicate})::int AS pending,
+         COUNT(*) FILTER (WHERE ${staleFieldCollectionPredicate})::int AS stale
+       FROM field_collection_records f
+       WHERE ${scope.sql}`,
+      scope.values,
+    ),
+    pool.query(
+      `SELECT
+         f.id,
+         f.local_id AS "localId",
+         f.client_id AS "clientId",
+         c.display_name AS "clientName",
+         f.collector_id AS "collectorId",
+         u.display_name AS "collectorName",
+         f.branch_id AS "branchId",
+         f.amount,
+         f.captured_at AS "capturedAt",
+         GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - f.captured_at)) / 86400))::int AS "ageDays",
+         f.status,
+         f.synced_at AS "syncedAt",
+         f.payment_id AS "paymentId",
+         p.receipt_reference AS "receiptReference"
+       FROM field_collection_records f
+       LEFT JOIN clients c ON c.id = f.client_id
+       LEFT JOIN users u ON u.id = f.collector_id
+       LEFT JOIN payments p ON p.id = f.payment_id
+       WHERE ${predicate}
+       ORDER BY f.captured_at ASC, f.id ASC
+       LIMIT $${n} OFFSET $${n + 1}`,
+      [...values, page.pageSize, page.offset],
+    ),
+  ]);
+  return {
+    ...paginationData(rows.rows.map((row) => ({ ...row, amount: Number(row.amount), ageDays: Number(row.ageDays) })), Number(count.rows[0]?.count ?? 0), page),
+    summary: {
+      pending: Number(summary.rows[0]?.pending ?? 0),
+      stale: Number(summary.rows[0]?.stale ?? 0),
+    },
+  };
+}
+
 async function singleApplication(actor: Actor, id: string) {
   const scope = scopeFor(actor, 'application', 'la', undefined, 2); const result = await pool.query(`SELECT la.id, la.client_id AS "clientId", c.display_name AS "clientName", c.external_ref AS "clientExternalRef", la.product_id AS "productId", lp.name AS "productName", la.branch_id AS "branchId", la.requested_amount AS "requestedAmount", la.status, la.created_by AS "createdBy", la.created_at AS "createdAt", la.submitted_at AS "submittedAt", k.id AS "kycId", k.status AS "kycStatus", k.verification_method AS "verificationMethod", k.evidence_notes AS "kycEvidenceNotes", r.id AS "riskId", r.score AS "riskScore", r.risk_grade AS "riskGrade", r.status AS "riskStatus", r.policy_version AS "riskPolicyVersion", r.rationale AS "riskRationale" FROM loan_applications la JOIN clients c ON c.id = la.client_id JOIN loan_products lp ON lp.id = la.product_id LEFT JOIN LATERAL (SELECT * FROM kyc_records WHERE client_id = la.client_id ORDER BY created_at DESC LIMIT 1) k ON true LEFT JOIN risk_assessments r ON r.application_id = la.id WHERE la.id = $1 AND ${scope.sql}`, [id, ...scope.values]);
   if (!result.rowCount) throw Object.assign(new Error('Loan application not found'), { statusCode: 404, code: 'APPLICATION_NOT_FOUND' });
@@ -165,16 +236,12 @@ export function registerReadApiRoutes(app: FastifyInstance, verifier?: TokenVeri
       pool.query(`SELECT status, count(*)::int AS count FROM payments p WHERE ${paymentScope.sql} GROUP BY status`, paymentScope.values),
       pool.query(`SELECT status, count(*)::int AS count FROM reconciliations r WHERE ${recScope.sql} GROUP BY status`, recScope.values),
       pool.query(`SELECT count(DISTINCT l.id)::int AS count FROM loans l JOIN repayment_schedules rs ON rs.loan_id = l.id WHERE ${loanScope.sql} AND rs.status = 'open' AND rs.due_on = CURRENT_DATE`, loanScope.values),
-      pool.query<{ pending: string; stale: string }>(
-        `SELECT
-           COUNT(*) FILTER (WHERE f.status IN ('recorded', 'pending_reconciliation'))::int AS pending,
-           COUNT(*) FILTER (
-             WHERE f.status IN ('recorded', 'pending_reconciliation')
-               AND f.synced_at IS NULL
-               AND f.captured_at < NOW() - INTERVAL '7 days'
-           )::int AS stale
-         FROM field_collection_records f
-         WHERE ${fieldCollectionScope.sql}`,
+       pool.query<{ pending: string; stale: string }>(
+         `SELECT
+            COUNT(*) FILTER (WHERE ${pendingFieldCollectionPredicate})::int AS pending,
+            COUNT(*) FILTER (WHERE ${staleFieldCollectionPredicate})::int AS stale
+          FROM field_collection_records f
+          WHERE ${fieldCollectionScope.sql}`,
         fieldCollectionScope.values,
       ),
     ]);
@@ -194,6 +261,10 @@ export function registerReadApiRoutes(app: FastifyInstance, verifier?: TokenVeri
   registerList(app, auth, '/api/v1/loans', loanRoles, pagedLoans, { queue: { type: 'string', enum: [...loanQueues] } });
   registerList(app, auth, '/api/v1/clients', clientRoles, pagedClients);
   registerList(app, auth, '/api/v1/payments', paymentRoles, pagedPayments, { queue: { type: 'string', enum: [...paymentStatuses] } });
+  registerList(app, auth, '/api/v1/field-collection-records', ['admin', 'manager'], pagedFieldCollectionRecords, {
+    status: { type: 'string', enum: [...fieldCollectionStatuses] },
+    staleOnly: { type: 'boolean' },
+  });
   app.get('/api/v1/loan-applications/:id', { preHandler: [auth, requireRoles(applicationRoles), requireBranchScope((request) => request.actor?.branchId ?? undefined)], schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } } }, async (request) => envelope(request, await singleApplication(request.actor!, (request.params as { id: string }).id)));
   app.get('/api/v1/loans/:id', { preHandler: [auth, requireRoles(loanRoles), requireBranchScope((request) => request.actor?.branchId ?? undefined)], schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } } }, async (request) => envelope(request, await singleLoan(request.actor!, (request.params as { id: string }).id)));
   app.get('/api/v1/clients/:id', { preHandler: [auth, requireRoles(clientRoles), requireBranchScope((request) => request.actor?.branchId ?? undefined)], schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } } }, async (request) => envelope(request, await singleClient(request.actor!, (request.params as { id: string }).id)));
