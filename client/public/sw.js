@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'letsgrow-shell-v2';
+const SHELL_CACHE = 'letsgrow-shell-v3';
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 const API_PATHS = ['/api/', '/health'];
 const STATIC_DESTINATIONS = new Set(['document', 'script', 'style', 'image', 'font', 'manifest']);

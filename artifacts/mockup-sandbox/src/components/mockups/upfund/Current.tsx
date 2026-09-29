@@ -269,7 +269,7 @@ export function Current() {
           {lastRecord && <Receipt record={lastRecord} />}
         </div>
         <ManagerReview batch={batch} />
-        <footer className="footer">System version v1.0.01 (preview) · Backend: {online ? 'Live' : 'Unavailable'}</footer>
+        <footer className="footer">System version v1.0.10 (preview) · Backend: {online ? 'Live' : 'Unavailable'}</footer>
       </main>
     </div>
   );

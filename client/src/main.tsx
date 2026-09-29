@@ -16,7 +16,7 @@ import { SignInCard } from './components/auth/SignInCard.js';
 import { AppRoutes } from './routes.js';
 import type { VarianceBatch } from './components/field/ManagerVarianceDashboard.js';
 
-const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.01';
+const appVersion = import.meta.env.VITE_APP_VERSION ?? '1.0.10';
 const gitSha = import.meta.env.VITE_GIT_SHA ?? 'dev';
 const LazyManagerVarianceDashboard = lazy(async () => { const module = await import('./components/field/ManagerVarianceDashboard.js'); return { default: module.ManagerVarianceDashboard }; });
 const LazyAccountantReconciliationView = lazy(async () => { const module = await import('./components/field/AccountantReconciliationView.js'); return { default: module.AccountantReconciliationView }; });
