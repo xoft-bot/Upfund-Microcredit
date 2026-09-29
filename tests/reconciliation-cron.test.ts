@@ -18,7 +18,7 @@ describe('reconciliation cron', () => {
     const result = await runReconciliationCycle(options, { loadCandidates: async () => candidates, expectedForBranch: async () => 120000, postBatch, quarantine, alertSink });
     expect(result).toEqual({ processed: 1, posted: 0, quarantined: 1, skipped: false });
     expect(postBatch).not.toHaveBeenCalled(); expect(quarantine).toHaveBeenCalledWith(expect.objectContaining({ variance: -20000, paymentIds: ['payment-1'] }));
-    expect(alertSink).toHaveBeenCalledWith(expect.objectContaining({ event: 'reconciliation.variance', version: '1.0.01', branchId: 'branch-1', variance: -20000, threshold: 100 }));
+    expect(alertSink).toHaveBeenCalledWith(expect.objectContaining({ event: 'reconciliation.variance', version: '1.0.10', branchId: 'branch-1', variance: -20000, threshold: 100 }));
   });
 
   it('skips a cycle already being processed by another runner', async () => {

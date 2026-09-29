@@ -11,7 +11,7 @@ describe('Stage 1 security boundary', () => {
     const response = await app.inject({ method: 'POST', url: '/api/stage1/commands/audit-ledger', payload: { branchId: 'branch-1', idempotencyKey: 'missing-auth' } });
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe('UNAUTHENTICATED');
-    expect(response.json().version).toBe('1.0.01');
+    expect(response.json().version).toBe('1.0.10');
     await app.close();
   });
 
@@ -20,7 +20,7 @@ describe('Stage 1 security boundary', () => {
     const response = await app.inject({ method: 'POST', url: '/api/stage1/commands/audit-ledger', headers: { authorization: 'Bearer test-token' }, payload: { branchId: 'branch-2', idempotencyKey: 'branch-scope-1' } });
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe('BRANCH_SCOPE_DENIED');
-    expect(response.json().version).toBe('1.0.01');
+    expect(response.json().version).toBe('1.0.10');
     await app.close();
   });
 });
