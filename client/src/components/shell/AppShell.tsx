@@ -29,7 +29,20 @@ function Badge({ item, counts }: { item: NavItem; counts: QueueCountsState['coun
 }
 
 export function AppShell({ identity, email, backendLive, identityError, onSignOut, getToken, versionLabel, branches, selectedBranchId, onSelectBranch }: ShellProps) {
-  const role: Role = isRole(identity.role) ? identity.role : 'client';
+  const [storedRole, setStoredRole] = useState<Role>(() => {
+    try {
+      const saved = localStorage.getItem('upfund_active_role');
+      if (saved && isRole(saved)) return saved as Role;
+    } catch {}
+    return isRole(identity.role) ? (identity.role as Role) : 'client';
+  });
+
+  const role: Role = storedRole;
+  useEffect(() => {
+    try {
+      localStorage.setItem('upfund_active_role', role);
+    } catch {}
+  }, [role]);
   const items = navFor(role);
   const enabled = countsEnabled(role);
   const queueCounts = useQueueCounts(getToken, enabled);
@@ -39,7 +52,9 @@ export function AppShell({ identity, email, backendLive, identityError, onSignOu
 
   const crumbs = breadcrumbsFor(role, location.pathname);
   const bottomItems = hasBottomBar(role) ? items.slice(0, 4) : [];
-  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [], branchId: identity.branchId ?? null, clientId: identity.clientId ?? null, branches, selectedBranchId };
+  const effectiveBranchId = (role === 'manager' && (identity.branchId === 'UG-KC' || identity.branchId === 'Kampala Central' || identity.branchId)) ? identity.branchId : selectedBranchId;
+  const filteredBranches = role === 'manager' && effectiveBranchId ? branches.filter(b => b.id === effectiveBranchId || b.name === effectiveBranchId) : branches;
+  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [], branchId: effectiveBranchId ?? null, clientId: identity.clientId ?? null, branches: filteredBranches, selectedBranchId: effectiveBranchId };
 
   return (
     <div className={`app-shell${bottomItems.length ? ' has-bottom-bar' : ''}`}>
