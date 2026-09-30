@@ -69,7 +69,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
   ],
   collector: [
     nav('home', 'Today', '/'),
-    nav('loans', 'My loans', '/loans', b('loans', 'due_today')),
+    nav('loans', 'Assigned Loans', '/loans', b('loans', 'due_today')),
     nav('collections', 'Capture', '/collections'),
   ],
   accountant: [
@@ -110,7 +110,7 @@ export const ACTION_CARDS: Record<Role, ActionCard[]> = {
     { id: 'loans-overdue', label: 'Overdue loans', hint: 'Your loans past their due date', ref: b('loans', 'overdue'), path: '/loans/overdue' },
   ],
   collector: [
-    { id: 'loans-due', label: 'Due today', hint: 'Assigned loans to visit', ref: b('loans', 'due_today'), path: '/loans/due_today' },
+    { id: 'loans-due', label: 'Assigned Loans', hint: 'Assigned loans on your route', ref: b('loans', 'due_today'), path: '/loans/due_today' },
     { id: 'loans-overdue', label: 'Overdue', hint: 'Assigned loans past due', ref: b('loans', 'overdue'), path: '/loans/overdue' },
   ],
   accountant: [
