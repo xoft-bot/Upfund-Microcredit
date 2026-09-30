@@ -16,6 +16,7 @@ export function AccountantReconciliationView({ batches, branchId }: AccountantRe
       </button>)}
     </div>}
     {selected && <div className="variance-detail" aria-live="polite">
+      <div className="field-card-heading"><span className="badge badge-warning" style={{ backgroundColor: "#fef3c7", color: "#92400e", padding: "4px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: 600 }}>Read-Only: Approval Restricted to Manager / Admin</span></div>
       <div className="field-card-heading"><h3>{selected.batchReference}</h3><button className="text-button" type="button" onClick={() => setSelected(undefined)}>Close</button></div>
       <div className="metric-grid">
         <div><span>Expected</span><strong>{selected.expectedAmount.toLocaleString()}</strong></div>
