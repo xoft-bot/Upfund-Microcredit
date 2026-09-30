@@ -13,7 +13,7 @@ describe('PWA pilot shell', () => {
   });
 
   it('caches only the static shell and falls back to the app shell offline', () => {
-    expect(serviceWorker).toContain("const SHELL_CACHE = 'letsgrow-shell-v2'");
+    expect(serviceWorker).toContain("const SHELL_CACHE = 'letsgrow-shell-v3'");
     expect(serviceWorker).toContain("const API_PATHS = ['/api/', '/health']");
     expect(serviceWorker).toContain("caches.match('/index.html')");
     expect(serviceWorker).toContain('self.clients.claim()');
