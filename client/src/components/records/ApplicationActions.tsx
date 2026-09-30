@@ -3,11 +3,13 @@ import { APPROVE_REASON, KYC_METHODS, applicationActions, validateRisk } from '.
 import { assessApplicationRisk, decideApplication, reviewApplicationKyc, submitLoanApplication } from '../../services/api.js';
 import { useAction } from './useAction.js';
 
-interface Props { id: string; status: string; permissions: readonly string[]; getToken: () => Promise<string>; onDone: () => void }
+interface Props { id: string; status: string; permissions: readonly string[]; getToken: () => Promise<string>; onDone: () => void; isCreatedByActiveUser?: boolean; }
 
-export function ApplicationActions({ id, status, permissions, getToken, onDone }: Props) {
+export function ApplicationActions({ id, status, permissions, getToken, onDone, isCreatedByActiveUser = false }: Props) {
   const actions = applicationActions(status, permissions);
   const { busy, error, notice, run } = useAction(getToken, onDone);
+  const selfApprovalRestricted = Boolean(isCreatedByActiveUser);
+
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [approveReason, setApproveReason] = useState(APPROVE_REASON);
   const [kycStatus, setKycStatus] = useState<'verified' | 'rejected'>('verified');
@@ -44,7 +46,7 @@ export function ApplicationActions({ id, status, permissions, getToken, onDone }
       {actions.includes('submit') && (
         <div className="act-block">
           <p className="note">This draft has not been submitted for review.</p>
-          <button className="primary-button" type="button" disabled={busy} onClick={() => void run((token) => submitLoanApplication(id, token), 'Application submitted for review.')}>Submit application</button>
+          <button className="primary-button" type="button" disabled={busy || selfApprovalRestricted} title={selfApprovalRestricted ? "Self-approval is restricted. An independent manager must approve this application." : undefined} onClick={() => void run((token) => submitLoanApplication(id, token), 'Application submitted for review.')}>Submit application</button>
         </div>
       )}
 
@@ -54,7 +56,7 @@ export function ApplicationActions({ id, status, permissions, getToken, onDone }
           <label>Decision<select value={kycStatus} onChange={(event) => setKycStatus(event.target.value as 'verified' | 'rejected')}><option value="verified">Verified</option><option value="rejected">Rejected</option></select></label>
           <label>Verification method<select value={kycMethod} onChange={(event) => setKycMethod(event.target.value)}>{KYC_METHODS.map((method) => <option key={method.id} value={method.id}>{method.label}</option>)}</select></label>
           <label>Evidence and notes<textarea value={kycNotes} onChange={(event) => setKycNotes(event.target.value)} placeholder="Record what was verified and where evidence is stored." /></label>
-          <button className="primary-button" type="submit" disabled={busy}>{kycStatus === 'verified' ? 'Verify KYC' : 'Reject KYC'}</button>
+          <button className="primary-button" type="submit" disabled={busy || selfApprovalRestricted} title={selfApprovalRestricted ? "Self-approval is restricted. An independent manager must approve this application." : undefined}>{kycStatus === 'verified' ? 'Verify KYC' : 'Reject KYC'}</button>
         </form>
       )}
 
@@ -65,7 +67,7 @@ export function ApplicationActions({ id, status, permissions, getToken, onDone }
           <label>Risk grade<input value={risk.grade} maxLength={20} placeholder="A, B, C…" onChange={(event) => setRisk({ ...risk, grade: event.target.value })} /></label>
           <label>Policy version<input value={risk.policy} maxLength={64} placeholder="Credit policy version" onChange={(event) => setRisk({ ...risk, policy: event.target.value })} /></label>
           <label>Rationale<textarea value={risk.rationale} placeholder="Explain the assessment and decision basis." onChange={(event) => setRisk({ ...risk, rationale: event.target.value })} /></label>
-          <button className="primary-button" type="submit" disabled={busy}>Record risk assessment</button>
+          <button className="primary-button" type="submit" disabled={busy || selfApprovalRestricted} title={selfApprovalRestricted ? "Self-approval is restricted. An independent manager must approve this application." : undefined}>Record risk assessment</button>
         </form>
       )}
 
@@ -73,13 +75,13 @@ export function ApplicationActions({ id, status, permissions, getToken, onDone }
         <div className="act-block">
           <p className="note">Approving creates the loan account. This cannot be undone from here.</p>
           {!confirmApprove ? (
-            <button className="primary-button" type="button" disabled={busy} onClick={() => setConfirmApprove(true)}>Approve application</button>
+            <button className="primary-button" type="button" disabled={busy || selfApprovalRestricted} title={selfApprovalRestricted ? "Self-approval is restricted. An independent manager must approve this application." : undefined} onClick={() => setConfirmApprove(true)}>Approve application</button>
           ) : (
             <div className="act-form">
               <label>Reason (kept in the audit trail)<textarea value={approveReason} onChange={(event) => setApproveReason(event.target.value)} /></label>
               <div className="act-row">
-                <button className="primary-button" type="button" disabled={busy} onClick={approve}>Confirm approval</button>
-                <button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirmApprove(false)}>Cancel</button>
+                <button className="primary-button" type="button" disabled={busy || selfApprovalRestricted} title={selfApprovalRestricted ? "Self-approval is restricted. An independent manager must approve this application." : undefined} onClick={approve}>Confirm approval</button>
+                <button className="secondary-button" type="button" disabled={busy || selfApprovalRestricted} title={selfApprovalRestricted ? "Self-approval is restricted. An independent manager must approve this application." : undefined} onClick={() => setConfirmApprove(false)}>Cancel</button>
               </div>
             </div>
           )}
