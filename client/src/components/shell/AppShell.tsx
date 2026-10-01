@@ -19,7 +19,7 @@ export interface ShellProps {
   onSelectBranch: (branchId: string) => void;
 }
 /** Passed to every route via <Outlet context>. Read it with useOutletContext<ShellOutletContext>(). */
-export type ShellOutletContext = QueueCountsState & { role: Role; countsEnabled: boolean; getToken: () => Promise<string>; permissions: readonly string[]; branchId: string | null; clientId: string | null; branches: ReadonlyArray<{ id: string; code: string; name: string }>; selectedBranchId?: string };
+export type ShellOutletContext = QueueCountsState & { role: Role; countsEnabled: boolean; getToken: () => Promise<string>; permissions: readonly string[]; branchId: string | null; clientId: string | null; userId: string | null; branches: ReadonlyArray<{ id: string; code: string; name: string }>; selectedBranchId?: string };
 
 function Badge({ item, counts }: { item: NavItem; counts: QueueCountsState['counts'] }) {
   if (!item.badge) return null;
@@ -29,11 +29,16 @@ function Badge({ item, counts }: { item: NavItem; counts: QueueCountsState['coun
 }
 
 export function AppShell({ identity, email, backendLive, identityError, onSignOut, getToken, versionLabel, branches, selectedBranchId, onSelectBranch }: ShellProps) {
-  const [storedRole, setStoredRole] = useState<Role>(() => {
+  // Persisted once per mount from localStorage (or the signed-in identity's own role as a
+  // fallback). Nothing in this component currently changes it after mount — there's no
+  // role-switcher UI yet — so this is read-only scaffolding for that feature, not a bug.
+  const [storedRole] = useState<Role>(() => {
     try {
       const saved = localStorage.getItem('upfund_active_role');
       if (saved && isRole(saved)) return saved as Role;
-    } catch {}
+    } catch {
+      // localStorage can throw in restrictive environments (e.g. Safari private mode) — fall through to the identity-derived default below.
+    }
     return isRole(identity.role) ? (identity.role as Role) : 'client';
   });
 
@@ -41,7 +46,9 @@ export function AppShell({ identity, email, backendLive, identityError, onSignOu
   useEffect(() => {
     try {
       localStorage.setItem('upfund_active_role', role);
-    } catch {}
+    } catch {
+      // Same restrictive-environment case as above — persistence is a convenience, not a requirement.
+    }
   }, [role]);
   const items = navFor(role);
   const enabled = countsEnabled(role);
@@ -52,9 +59,11 @@ export function AppShell({ identity, email, backendLive, identityError, onSignOu
 
   const crumbs = breadcrumbsFor(role, location.pathname);
   const bottomItems = hasBottomBar(role) ? items.slice(0, 4) : [];
-  const effectiveBranchId = (role === 'manager' && (identity.branchId === 'UG-KC' || identity.branchId === 'Kampala Central' || identity.branchId)) ? identity.branchId : selectedBranchId;
+  // Manager is pinned to their own branch regardless of the picker (branch isolation);
+  // everyone else (admin, with the cross-branch picker) uses whatever's selected.
+  const effectiveBranchId = (role === 'manager' && identity.branchId) ? identity.branchId : selectedBranchId;
   const filteredBranches = role === 'manager' && effectiveBranchId ? branches.filter(b => b.id === effectiveBranchId || b.name === effectiveBranchId) : branches;
-  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [], branchId: effectiveBranchId ?? null, clientId: identity.clientId ?? null, branches: filteredBranches, selectedBranchId: effectiveBranchId };
+  const context: ShellOutletContext = { ...queueCounts, role, countsEnabled: enabled, getToken, permissions: identity.permissions ?? [], branchId: effectiveBranchId ?? null, clientId: identity.clientId ?? null, userId: identity.userId ?? null, branches: filteredBranches, selectedBranchId: effectiveBranchId };
 
   return (
     <div className={`app-shell${bottomItems.length ? ' has-bottom-bar' : ''}`}>

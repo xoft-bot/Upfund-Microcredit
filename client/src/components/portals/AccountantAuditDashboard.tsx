@@ -123,7 +123,11 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
       <label>From<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
       <label>To<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
       <button className="secondary-button" type="submit" disabled={loading || outOfBalance}>Refresh audit view</button>
+      {import.meta.env.DEV && <button className="text-button" type="button" onClick={() => setOutOfBalance((current) => !current)}>
+        {outOfBalance ? 'Clear simulated out-of-balance (dev)' : 'Simulate out-of-balance (dev)'}
+      </button>}
     </form>
+    {outOfBalance && <p className="form-error" role="alert">Simulated out-of-balance state — refresh is disabled until this is cleared. Dev-only; never set in production.</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
     {thresholds && <section className="portal-card reporting-panel" aria-labelledby="par-threshold-title">
       <div className="portal-card-heading"><div><p className="eyebrow">PAR configuration</p><h3 id="par-threshold-title">Portfolio-at-risk thresholds</h3></div></div>
