@@ -127,6 +127,19 @@ function assertClientScope(actor: Actor, clientId: string): void {
   if (actor.role === 'client' && actor.clientId !== clientId) fail('CLIENT_SCOPE_DENIED', 'Client scope denied', 403);
 }
 
+// Separation of duties: whoever created an application cannot also be the one who makes the final
+// approve/reject decision on it — mirrors the existing, already-shipped submitter!=decider check in
+// reconciliation-posting.ts. Deliberately scoped to decideApplication only, NOT to KYC review or risk
+// assessment: role_permissions (migration 008) grants 'officer' both kyc.review and risk.assess but
+// never loans.approve, so an officer self-reviewing their own application's KYC/risk is the intended,
+// tested workflow (they can never be the one to approve it regardless) — only 'admin'/'manager' hold
+// loans.approve, and a manager who both creates and decides the same application is the one real,
+// reachable self-approval path this guards against. Applies regardless of role (admin included) and
+// regardless of which way the decision goes, matching the reconciliation precedent exactly.
+function assertNotSelfApproval(actor: Actor, createdBy: string): void {
+  if (actor.userId === createdBy) fail('FORBIDDEN_SELF_APPROVAL', 'The creator of this application cannot decide on it', 403);
+}
+
 async function findApplication(client: DbClient | Pool, applicationId: string, forUpdate = false) {
   const suffix = forUpdate ? ' FOR UPDATE' : '';
   const result = await client.query<{
@@ -137,9 +150,10 @@ async function findApplication(client: DbClient | Pool, applicationId: string, f
     product_id: string;
     requested_amount: string;
     status: ApplicationStatus;
+    created_by: string;
   }>(
     `SELECT la.id, la.client_id, c.display_name AS client_name, la.branch_id,
-            la.product_id, la.requested_amount, la.status
+            la.product_id, la.requested_amount, la.status, la.created_by
        FROM loan_applications la
        JOIN clients c ON c.id = la.client_id
       WHERE la.id = $1${suffix}`,
@@ -480,6 +494,7 @@ export async function decideApplication(actor: Actor, applicationId: string, inp
   return withTransaction(async (client) => {
     const application = await findApplication(client, applicationId, true);
     assertBranchScope(actor, application.branch_id);
+    assertNotSelfApproval(actor, application.created_by);
     const nextStatus: ApplicationStatus = input.decision === 'approve' ? 'approved' : 'rejected';
     assertApplicationTransition(application.status, nextStatus);
     if (input.decision === 'approve') {

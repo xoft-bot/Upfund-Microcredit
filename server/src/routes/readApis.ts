@@ -14,6 +14,10 @@ const staffRoles: UserRole[] = ['admin', 'manager', 'officer'];
 const applicationRoles: UserRole[] = ['admin', 'manager', 'officer', 'client'];
 const loanRoles: UserRole[] = ['admin', 'manager', 'officer', 'collector', 'client'];
 const clientRoles: UserRole[] = ['admin', 'manager', 'officer'];
+// Detail-only extension: a collector may look up a single client they're actively assigned to
+// (needed when working a collection in the field), but the paginated list above stays as-is —
+// collectors don't get a browsable roster of clients, only lookup of ones they're assigned to.
+const clientDetailRoles: UserRole[] = ['admin', 'manager', 'officer', 'collector'];
 const paymentRoles: UserRole[] = ['admin', 'manager', 'officer', 'accountant'];
 const auditRoles: UserRole[] = ['admin', 'manager', 'officer', 'accountant'];
 const searchRoles: UserRole[] = ['admin', 'manager', 'officer', 'accountant', 'client'];
@@ -78,6 +82,12 @@ export function scopeFor(actor: Actor, kind: ScopeKind, alias: string, requested
   } else if (actor.role === 'collector') {
     if (kind === 'loan') parts.push(`EXISTS (SELECT 1 FROM collector_assignments ca WHERE ca.client_id = ${alias}.client_id AND ca.officer_id = ${bind(actor.dbUserId)} AND ca.effective_from <= CURRENT_DATE AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE))`);
     else if (kind === 'field_collection') parts.push(`${alias}.collector_id = ${bind(actor.dbUserId)}`);
+    // Client read is assignment-scoped, not branch-wide: a collector may see a client's profile only
+    // while they have a live assignment to that client (same effective-date predicate as 'loan' above).
+    // This intentionally does NOT extend to the paginated /clients list (registerList below still uses
+    // clientRoles, which excludes collector) — only the single-record detail lookup a collector actually
+    // needs when working an assigned client.
+    else if (kind === 'client') parts.push(`EXISTS (SELECT 1 FROM collector_assignments ca WHERE ca.client_id = ${alias}.id AND ca.officer_id = ${bind(actor.dbUserId)} AND ca.effective_from <= CURRENT_DATE AND (ca.effective_to IS NULL OR ca.effective_to >= CURRENT_DATE))`);
     else return denyAll(start);
   }
   return { sql: parts.join(' AND '), values, next: n };
@@ -267,7 +277,7 @@ export function registerReadApiRoutes(app: FastifyInstance, verifier?: TokenVeri
   });
   app.get('/api/v1/loan-applications/:id', { preHandler: [auth, requireRoles(applicationRoles), requireBranchScope((request) => request.actor?.branchId ?? undefined)], schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } } }, async (request) => envelope(request, await singleApplication(request.actor!, (request.params as { id: string }).id)));
   app.get('/api/v1/loans/:id', { preHandler: [auth, requireRoles(loanRoles), requireBranchScope((request) => request.actor?.branchId ?? undefined)], schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } } }, async (request) => envelope(request, await singleLoan(request.actor!, (request.params as { id: string }).id)));
-  app.get('/api/v1/clients/:id', { preHandler: [auth, requireRoles(clientRoles), requireBranchScope((request) => request.actor?.branchId ?? undefined)], schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } } }, async (request) => envelope(request, await singleClient(request.actor!, (request.params as { id: string }).id)));
+  app.get('/api/v1/clients/:id', { preHandler: [auth, requireRoles(clientDetailRoles), requireBranchScope((request) => request.actor?.branchId ?? undefined)], schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1 } } } } }, async (request) => envelope(request, await singleClient(request.actor!, (request.params as { id: string }).id)));
   app.get('/api/v1/search', { preHandler: [auth, requireRoles(searchRoles), requireBranchScope(requestedBranch)], schema: querySchema() }, async (request) => {
     const query = request.query as PageQuery; if (!query.q || query.q.trim().length < 2) throw Object.assign(new Error('q must contain at least 2 characters'), { statusCode: 400, code: 'SEARCH_QUERY_TOO_SHORT' });
     const actor = request.actor!; const like = likeOf(query.q.trim());

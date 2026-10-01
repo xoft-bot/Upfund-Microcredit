@@ -32,12 +32,16 @@ describe('Phase 1 read scope (defense in depth)', () => {
     expect(scopeFor(officer, 'payment', 'p').sql).toContain('oa.created_by = $2');
     expect(scopeFor(officer, 'client', 'c').values).toEqual([A]);
   });
-  it('limits collectors to actively assigned loans and denies every other kind', () => {
+  it('limits collectors to actively assigned loans and clients, and denies every other kind', () => {
     const collector = actor('collector', { dbUserId: 'col-1' });
     const loan = scopeFor(collector, 'loan', 'l');
     expect(loan.sql).toContain('collector_assignments');
     expect(loan.values).toEqual([A, 'col-1']);
-    for (const kind of ['application', 'client', 'payment', 'reconciliation', 'audit'] as const) expect(scopeFor(collector, kind, 'x').sql).toBe('FALSE');
+    const client = scopeFor(collector, 'client', 'x');
+    expect(client.sql).toContain('collector_assignments');
+    expect(client.sql).toContain('ca.client_id = x.id');
+    expect(client.values).toEqual([A, 'col-1']);
+    for (const kind of ['application', 'payment', 'reconciliation', 'audit'] as const) expect(scopeFor(collector, kind, 'x').sql).toBe('FALSE');
   });
   it('limits clients to their own records and never emits a client_id predicate on tables without that column', () => {
     const client = actor('client', { clientId: 'c1' });
