@@ -10,7 +10,7 @@ import { getApplicationTimeline, getLoanApplicationRecord, type ApplicationTimel
 
 export default function ApplicationRecord() {
   const { id = '' } = useParams();
-  const { role, getToken, permissions } = useOutletContext<ShellOutletContext>();
+  const { role, getToken, permissions, userId } = useOutletContext<ShellOutletContext>();
   const [version, setVersion] = useState(0);
   const record = useRecord<ListRow>(getToken, (token) => getLoanApplicationRecord(id, token), `app:${id}`, version);
   const timeline = useRecord<ApplicationTimelineEntry[]>(getToken, (token) => getApplicationTimeline(id, token), `timeline:${id}`, version);
@@ -19,6 +19,11 @@ export default function ApplicationRecord() {
   if (!row) return <RecordFrame title="Application" backTo="/applications" backLabel="Applications"><LoadState loading={record.loading} error={record.error} /></RecordFrame>;
 
   const clientLink = canAccess(role, '/clients') && str(row.clientId) ? <Link to={`/clients/${encodeURIComponent(str(row.clientId))}`}>{str(row.clientName) || str(row.clientId)}</Link> : (str(row.clientName) || '–');
+  // Drives the self-approval restriction in ApplicationActions: an officer/manager who
+  // created this application cannot also be the one who submits KYC, risk, or the final
+  // approval for it. Compares the server's actor.dbUserId (threaded through as
+  // identity.userId → ShellOutletContext.userId) against the application's own created_by.
+  const isCreatedByActiveUser = Boolean(userId) && str(row.createdBy) === userId;
   return (
     <RecordFrame title={`${str(row.clientName) || 'Application'}: ${formatUgx(row.requestedAmount)}`} subtitle={str(row.productName)} status={row.status} backTo="/applications" backLabel="Applications">
       <div className="rec-grid">
@@ -56,7 +61,7 @@ export default function ApplicationRecord() {
         </Card>
         {canViewAudit(role) && <AuditPanel entityId={id} getToken={getToken} version={version} />}
         <Card title="Actions" wide>
-          <ApplicationActions id={id} status={str(row.status)} permissions={permissions} getToken={getToken} onDone={() => setVersion((current) => current + 1)} />
+          <ApplicationActions id={id} status={str(row.status)} permissions={permissions} getToken={getToken} onDone={() => setVersion((current) => current + 1)} isCreatedByActiveUser={isCreatedByActiveUser} />
         </Card>
       </div>
     </RecordFrame>

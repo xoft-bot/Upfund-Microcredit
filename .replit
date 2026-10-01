@@ -23,9 +23,9 @@ channel = "stable-25_05"
 packages = ["nano", "firebase-tools"]
 
 [[ports]]
-localPort = 5001
-externalPort = 5001
-
-[[ports]]
 localPort = 3001
 externalPort = 3001
+
+[[ports]]
+localPort = 5001
+externalPort = 5001

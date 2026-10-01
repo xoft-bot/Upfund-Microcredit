@@ -18,7 +18,7 @@ describe('navConfig role visibility', () => {
     expect(ids('client')).toEqual(['my-loans', 'my-applications', 'apply']);
   });
 
-  it('collector sees only Today, My loans, Capture', () => {
+  it('collector sees only Today, Assigned Loans, Capture', () => {
     expect(ids('collector')).toEqual(['home', 'loans', 'collections']);
   });
 
@@ -125,7 +125,7 @@ describe('breadcrumbsFor', () => {
     expect(breadcrumbsFor('admin', '/').map((c) => c.label)).toEqual(['Overview']);
     expect(breadcrumbsFor('admin', '/loans/due_today').map((c) => c.label)).toEqual(['Overview', 'Loans', 'Due today']);
     expect(breadcrumbsFor('admin', '/applications/record/0123456789abcdef').map((c) => c.label)).toEqual(['Overview', 'Applications', '01234567…']);
-    expect(breadcrumbsFor('collector', '/loans').map((c) => c.label)).toEqual(['Today', 'My loans']);
+    expect(breadcrumbsFor('collector', '/loans').map((c) => c.label)).toEqual(['Today', 'Assigned Loans']);
     expect(breadcrumbsFor('officer', '/applications/new').map((c) => c.label)).toEqual(['My work', 'Applications', 'New']);
   });
 });

@@ -20,6 +20,7 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
   const [to, setTo] = useState('');
   const [branchId, setBranchId] = useState(identity.role === 'accountant' ? identity.branchId ?? '' : '');
   const [loading, setLoading] = useState(true);
+  const [outOfBalance, setOutOfBalance] = useState(false);
   const [error, setError] = useState('');
   // PAR threshold config (Phase 3a): a small, independent read/edit panel — it doesn't
   // share loading state with the reporting snapshot above, since a failure here shouldn't
@@ -121,8 +122,12 @@ export function AccountantAuditDashboard({ identity }: AccountantAuditDashboardP
       {identity.role === 'admin' && <label>Branch<select value={branchId} onChange={(event) => setBranchId(event.target.value)}><option value="">All branches</option>{snapshot.branches.map((branch) => <option value={branch.branchId} key={branch.branchId}>{branch.branchName}</option>)}</select></label>}
       <label>From<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
       <label>To<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
-      <button className="secondary-button" type="submit" disabled={loading}>Refresh audit view</button>
+      <button className="secondary-button" type="submit" disabled={loading || outOfBalance}>Refresh audit view</button>
+      {import.meta.env.DEV && <button className="text-button" type="button" onClick={() => setOutOfBalance((current) => !current)}>
+        {outOfBalance ? 'Clear simulated out-of-balance (dev)' : 'Simulate out-of-balance (dev)'}
+      </button>}
     </form>
+    {outOfBalance && <p className="form-error" role="alert">Simulated out-of-balance state — refresh is disabled until this is cleared. Dev-only; never set in production.</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
     {thresholds && <section className="portal-card reporting-panel" aria-labelledby="par-threshold-title">
       <div className="portal-card-heading"><div><p className="eyebrow">PAR configuration</p><h3 id="par-threshold-title">Portfolio-at-risk thresholds</h3></div></div>
